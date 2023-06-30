@@ -14,8 +14,9 @@ grdc_txt2csv <- function(path_list,
     # read the GRDC text file for each station
     m <- fread(path_list[i], header = T, sep=";",
                colClasses = c('Date', 'character', 'numeric')) %>%
-      setnames('YYYY-MM-DD', 'dates') %>% 
-      setnames("Value", 'value') %>% 
+      setnames(c('YYYY-MM-DD',"Value"),
+               c('dates', 'value')
+               ) %>% 
       .[, - "hh:mm"]
     if (i %% 100 == 0) {
       print (i)
@@ -35,16 +36,10 @@ grdc_txt2csv <- function(path_list,
   }) %>% 
     rbindlist
   
-  out[value == -999, value := NA] 
-  out[, month := format(dates, "%Y-%m")]
+  out[value %in% c(-999, -99, -9999, 999, 9999), value := NA] 
   
-  # find the stations with records for at least 36 months
-  station_less36_mon <- out[gaugeid %in%
-                              out[, length(unique(month)), 
-                                  by=gaugeid][V1>=36,][[1]]
-                            ,
-  ]
-  
+  output_ts <- select_min_fullmonths(out, min_months = 36)
+
   out <- list(
     output_ts = station_less36_mon,
     gauge_ids = station_less36_mon[, unique(gaugeid)]
@@ -90,8 +85,31 @@ select_dataset <- function(shp_path, dataset_name = NULL, col_names = NULL){
     dplyr::pull(col_names)
 }
 
+select_min_fullmonths <- function(in_dt, min_months = 36) {
+  #out[value %in% c(-999, -99, -9999, 999, 9999), value := NA] 
+  in_dt[, month := format(dates, "%Y-%m")]
+  
+  in_dt[, missing_days_month := sum(is.na(value)), by=c('gaugeid', 'month')]
+  
+  # find the stations with records for at least 36 months
+  station_less36_mon <- in_dt[gaugeid %in%
+                                in_dt[missing_days_month == 0, 
+                                      length(unique(month)), 
+                                      by=gaugeid][V1>=36,][[1]]
+                              ,][missing_days_month == 0,]
+  
+  return(station_less36_mon[, c('gaugeid', 'dates', 'value'), with=F])
+}
+
 #---------------------------- WORKFLOW FUNCTIONS -------------------------------
 download_spanish_stations <- function(output_dir) {
+  #https://ceh.cedex.es/anuarioaforos/demarcaciones.asp
+  #indroea: Indicativo oficial de la estación de aforos
+  #fecha: dd/mm/yyyy
+  #altura: water height - m
+  #caudal: discharge - m3/s
+  #suprest: drainage area in - km2
+  
   if (!dir.exists(output_dir)) {
     dir.create(output_dir)
   }
@@ -113,30 +131,67 @@ download_spanish_stations <- function(output_dir) {
     }
     
     return(daily_tab_path)
-  }) 
+  }) %>% unlist
   
   stations_metadata <- lapply(basins, function(ba) {
     url <- paste0(
       "https://ceh-flumen64.cedex.es/anuarioaforos//anuario-2019-2020//",
       ba,
-      "//afliq.csv")
+      "//estaf.csv")
     
-    daily_tab_path <- file.path(output_dir, paste0('estaf_', ba, '.csv'))
+    metadata_path <- file.path(output_dir, paste0('estaf_', ba, '.csv'))
     
-    if (!file.exists(daily_tab_path)) {
+    if (!file.exists(metadata_path)) {
       print(paste('Downloading', url))
-      download.file(url, daily_tab_path)
+      download.file(url, metadata_path)
     }
     
-    out_tab <- fread(daily_tab_path, sep=";")
+    out_tab <- fread(metadata_path, sep=";")
     return(out_tab)
   }) %>%
     rbindlist
   
-  
-  
   return(list(paths=daily_q_paths,
               metadata=stations_metadata))
+}
+
+in_paths <- tar_read(spanish_rawfiles)$paths
+in_metadata <- tar_read(spanish_rawfiles)$metadata
+
+select_spanish_stations <- function(in_paths, in_metadata,
+                                    start_date ="1981-01-01",
+                                    end_date ="2019-12-31") {
+  
+  out <- lapply(seq_along(in_paths), function(i){
+
+    # read the GRDC text file for each station
+    m <- data.table::fread(in_paths[i], header = T, sep=";") %>%
+      setnames(c('fecha', 'caudal', 'indroea'),
+               c('dates', 'value', 'gaugeid')
+               ) %>% 
+      mutate(dates = as.Date(dates, format = "%d/%m/%Y"))
+    
+    # join the values of station by matching dates
+    all_dt <- m[,
+                list(
+                  dates = seq.Date(
+                    as.Date(paste0(format(min(dates, na.rm=T), '%Y'),'-01-01')),
+                    as.Date(paste0(format(max(dates, na.rm=T), '%Y'),'-12-31')),
+                    "day")
+                ),
+                by=gaugeid
+    ]
+    
+    # join the values of station by matching dates
+    all_dt <- merge(all_dt, m, by=c("dates", "gaugeid"), all.x=T) %>%
+      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),]
+    
+    return(all_dt)
+  }) %>% 
+    rbindlist
+  
+
+  
 }
 
 
@@ -189,7 +244,7 @@ select_gsim_stations <- function(path, shp_path, dataset_name = "GSIM"){
     dplyr::mutate(date = as.Date(date, format = "%m/%d/%Y")) %>%
     dplyr::filter(date >= as.Date("1981-01-01")) %>% 
     rename(dates = date)
-  
+
   return(output)
 }
 
@@ -227,15 +282,10 @@ select_smires_stations <- function(path, shp_path,
   }) %>% 
     rbindlist
   
-  out[value == -999, value := NA] 
-  out[, month := format(dates, "%Y-%m")]
+  out[value %in% c(-999, -99, -9999, 999, 9999), value := NA] 
   
   # find the stations with records for at least 36 months
-  station_less36_mon <- out[gaugeid %in%
-                              out[, length(unique(month)), 
-                                  by=gaugeid][V1>=36,][[1]]
-                            ,
-  ]
+  output_ts <- select_min_fullmonths(out, min_months = 36)
   
   out <- list(
     output_ts = station_less36_mon,
@@ -283,16 +333,11 @@ select_corsica_stations <- function(path, shp_path,
   })  %>% 
     rbindlist
   
-  out[value == -999, value := NA] 
+  out[value %in% c(-999, -99, -9999, 999, 9999), value := NA] 
   out[, value := value/1000]
-  out[, month := format(dates, "%Y-%m")]
-  
+
   # find the stations with records for at least 36 months
-  station_less36_mon <- out[gaugeid %in%
-                              out[, length(unique(month)), 
-                                  by=gaugeid][V1>=36,][[1]]
-                            ,
-  ]
+  output_ts <- select_min_fullmonths(out, min_months = 36)
   
   out <- list(
     output_ts = station_less36_mon,
@@ -341,14 +386,8 @@ select_italian_emr_stations <- function(path, shp_path,
   }) %>% 
     rbindlist
   
-  out[, month := format(dates, "%Y-%m")]
-  
   # find the stations with records for at least 36 months
-  station_less36_mon <- out[gaugeid %in%
-                              out[, length(unique(month)), 
-                                  by=gaugeid][V1>=36,][[1]]
-                            ,
-  ]
+  output_ts <- select_min_fullmonths(out, min_months = 36)
   
   out <- list(
     output_ts = station_less36_mon,
@@ -393,14 +432,8 @@ select_italian_ispra_stations <- function(path, shp_path,
   }) %>% 
     rbindlist
   
-  out[, month := format(dates, "%Y-%m")]
-  
   # find the stations with records for at least 36 months
-  station_less36_mon <- out[gaugeid %in%
-                              out[, length(unique(month)), 
-                                  by=gaugeid][V1>=36,][[1]]
-                            ,
-  ]
+  output_ts <- select_min_fullmonths(out, min_months = 36)
   
   out <- list(
     output_ts = station_less36_mon,
@@ -446,14 +479,8 @@ select_italian_arpal_stations <- function(path, shp_path,
   }) %>% 
     rbindlist
   
-  out[, month := format(dates, "%Y-%m")]
-  
   # find the stations with records for at least 36 months
-  station_less36_mon <- out[gaugeid %in%
-                              out[, length(unique(month)), 
-                                  by=gaugeid][V1>=36,][[1]]
-                            ,
-  ]
+  output_ts <- select_min_fullmonths(out, min_months = 36)
   
   out <- list(
     output_ts = station_less36_mon,
@@ -504,14 +531,8 @@ select_italian_arpas_stations <- function(path, shp_path,
   }) %>% 
     rbindlist
   
-  out[, month := format(dates, "%Y-%m")]
-  
   # find the stations with records for at least 36 months
-  station_less36_mon <- out[gaugeid %in%
-                              out[, length(unique(month)), 
-                                  by=gaugeid][V1>=36,][[1]]
-                            ,
-  ]
+  output_ts <- select_min_fullmonths(out, min_months = 36)
   
   out <- list(
     output_ts = station_less36_mon,

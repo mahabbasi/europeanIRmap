@@ -20,7 +20,7 @@ if (dir.exists(preprocessed_path)) {
 # ----------------------- pre-processing: select interested European stations -----------------
 plan_preprocess = tar_plan(
   tar_target(
-    name = 'spanish_rawfiles_path',
+    name = 'spanish_rawfiles',
     download_spanish_stations(file.path(rootpath, "Data", "Spain_SAIH"))
   ),
   
@@ -94,6 +94,7 @@ plan_preprocess = tar_plan(
                                    shp_path = shp_path,
                                    dataset_name = "RBIS")
   ),
+
   tar_target(
     name = "smires_stations",
     command = select_smires_stations(path = input_files[[4]],
@@ -120,6 +121,14 @@ plan_preprocess = tar_plan(
     command =  select_italian_arpas_stations(path = input_files[[8]],
                                              shp_path = shp_path)
   ),
+  
+  tar_target(
+    name = 'spanish_stations',
+    command = select_spanish_stations(path = spanish_rawfiles$paths,
+                                      metadata =  spanish_rawfiles$metadata
+    )
+  ),
+  
   tar_target(
         name = "write_files",
         command = {
