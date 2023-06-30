@@ -10,13 +10,18 @@ rootpath = here::here()
 datapath = file.path(rootpath, "Data/targets")
 shp_path = file.path(rootpath, "Data/shp/eu_stations/spatial_joint_eu_stations.shp")
 
-preprocessed_path <- file.path(datapath, "preprocessed")
+resultspath = file.path(rootpath, "results")
+check_plot_path = file.path(resultspath, 'ts_plots')
+preprocessed_path <- file.path(resultspath, "preprocessed")
 
-if (dir.exists(preprocessed_path)) {
-  print("Folder exists!")
-} else {
-  dir.create(preprocessed_path)
-}
+lapply(list(resultspath, check_plot_path, preprocessed_path), function(path) {
+  if (dir.exists(path)) {
+    print("Folder exists!")
+  } else {
+    dir.create(path)
+  }
+})
+
 # ----------------------- pre-processing: select interested European stations -----------------
 plan_preprocess = tar_plan(
   tar_target(
@@ -124,34 +129,52 @@ plan_preprocess = tar_plan(
   
   tar_target(
     name = 'spanish_stations',
-    command = select_spanish_stations(path = spanish_rawfiles$paths,
-                                      metadata =  spanish_rawfiles$metadata
+    command = select_spanish_stations(in_paths = spanish_rawfiles$paths,
+                                      in_metadata =  spanish_rawfiles$metadata
     )
   ),
   
+  # tar_target(
+  #       name = "write_files",
+  #       command = {
+  #         data.table::fwrite(
+  #           corsica_stations$output_ts, file = file.path(datapath,"preprocessed/corsica_stations.csv"))
+  #         data.table::fwrite(
+  #           grdc_stations$output_dt, file = file.path(datapath,"preprocessed/grdc_updated_stations.csv"))
+  #         data.table::fwrite(
+  #           grdc_old_stations, file = file.path(datapath, "preprocessed/grdc_old_139stations.csv"))
+  #         data.table::fwrite(
+  #           gsim_stations, file = file.path(datapath, "preprocessed/gsim_stations.csv"))
+  #         data.table::fwrite(
+  #           rbis_stations, file = file.path(datapath, "preprocessed/rbis_stations.csv"))
+  #         data.table::fwrite(
+  #           smires_stations$output_ts, file = file.path(datapath, "preprocessed/smires_stations.csv"))
+  #         data.table::fwrite(
+  #           emr_stations$output_ts, file = file.path(datapath, "preprocessed/emr_stations.csv"))
+  #         data.table::fwrite(
+  #           ispra_stations$output_ts, file = file.path(datapath,"preprocessed/ispra_stations.csv"))
+  #         data.table::fwrite(
+  #           arpal_stations$output_ts, file = file.path(datapath, "preprocessed/arpal_stations.csv"))
+  #         data.table::fwrite(
+  #           arpas_stations$output_ts, file = file.path(datapath, "preprocessed/arpas_stations.csv"))
+  #       }, format = "file"
+  # ),
+  
   tar_target(
-        name = "write_files",
-        command = {
-          data.table::fwrite(
-            corsica_stations$output_ts, file = file.path(datapath,"preprocessed/corsica_stations.csv"))
-          data.table::fwrite(
-            grdc_stations$output_dt, file = file.path(datapath,"preprocessed/grdc_updated_stations.csv"))
-          data.table::fwrite(
-            grdc_old_stations, file = file.path(datapath, "preprocessed/grdc_old_139stations.csv"))
-          data.table::fwrite(
-            gsim_stations, file = file.path(datapath, "preprocessed/gsim_stations.csv"))
-          data.table::fwrite(
-            rbis_stations, file = file.path(datapath, "preprocessed/rbis_stations.csv"))
-          data.table::fwrite(
-            smires_stations$output_ts, file = file.path(datapath, "preprocessed/smires_stations.csv"))
-          data.table::fwrite(
-            emr_stations$output_ts, file = file.path(datapath, "preprocessed/emr_stations.csv"))
-          data.table::fwrite(
-            ispra_stations$output_ts, file = file.path(datapath,"preprocessed/ispra_stations.csv"))
-          data.table::fwrite(
-            arpal_stations$output_ts, file = file.path(datapath, "preprocessed/arpal_stations.csv"))
-          data.table::fwrite(
-            arpas_stations$output_ts, file = file.path(datapath, "preprocessed/arpas_stations.csv"))
-        }, format = "file"
+    ts_plots,
+    lapply(list(corsica_stations$output_ts,
+                grdc_stations$output_dt,
+                grdc_old_stations,
+                smires_stations$output_ts,
+                emr_stations$output_ts,
+                ispra_stations$output_ts,
+                arpal_stations$output_ts,
+                arpas_stations$output_ts),
+    function(in_dt) {
+      lapply(unique(in_dt$gaugeid), 
+             function(id) plot_daily_q_timeseries(in_dt[gaugeid == id,], 
+                                                  outdir=check_plot_path))
+    }
+    )
   )
 )

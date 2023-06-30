@@ -1,5 +1,4 @@
 #---------------------------- UTILITY FUNCTIONS --------------------------------
-
 grdc_txt2csv <- function(path_list, 
                          start_date ="1981-01-01",
                          end_date ="2019-12-31"){
@@ -38,14 +37,14 @@ grdc_txt2csv <- function(path_list,
   
   out[value %in% c(-999, -99, -9999, 999, 9999), value := NA] 
   
-  output_ts <- select_min_fullmonths(out, min_months = 36)
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36)
 
-  out <- list(
+  function_output <- list(
     output_ts = station_less36_mon,
     gauge_ids = station_less36_mon[, unique(gaugeid)]
   )
   
-  return(out)
+  return(function_output)
 }
 
 #' select the grdc stations within Europe
@@ -99,6 +98,251 @@ select_min_fullmonths <- function(in_dt, min_months = 36) {
                               ,][missing_days_month == 0,]
   
   return(station_less36_mon[, c('gaugeid', 'dates', 'value'), with=F])
+}
+
+#------ flag_outliers ------
+#' Flag outliers
+#'
+#' Flag potential outliers in daily discharge records for a given gauging
+#' station following the criteria developed for GSIM by
+#' [Gudmundsson et al. (2018)](https://essd.copernicus.org/articles/10/787/2018/).
+#'
+#' @param in_gaugetab \link[data.table]{data.table} containing formatted daily
+#' discharge record from gauging station.
+#'
+#' @details Criteria to flag a daily discharge value (Qt) as a potential outlier include:
+#' \itemize{
+#'   \item Negative values (Qt < 0)
+#'   \item At least ten identical consecutive discharge values (for Qt > 0)
+#'   \item |log(Qt + 0.01) - mean| are larger than the mean values of log(Q + 0.01)
+#'   plus or minus 6 times the standard deviation of log(Q + 0.01) computed for
+#'   that calendar day for the entire length of the series. The mean and SD are
+#'   computed for a 5-day window centred on the calendar day to ensure that a
+#'   sufficient amount of data is considered. The log-transformation is used to
+#'   account for the skewness of the distribution of daily streamflow values.
+#'   \item Qt for which value != Calculated discharge in the record
+#' }
+#'
+#' @return \link[data.table]{data.table} of daily discharge records with additional
+#' columns for outlier flags
+#'
+#' @source Gudmundsson, L., Do, H. X., Leonard, M., & Westra, S. (2018). The Global
+#'   Streamflow Indices and Metadata Archive (GSIM) – Part 2: Quality control,
+#'   time-series indices and homogeneity assessment. Earth System Science Data,
+#'   10(2), 787–804. https://doi.org/10.5194/essd-10-787-2018
+#'
+#' @export
+flag_outliers <- function(in_gaugetab) {
+  in_gaugetab[value %in% c(-999, -99, -9999, 999, 9999), value := NA]
+  
+  in_gaugetab[, `:=`(jday = format(as.Date(dates), '%j'),#Julian day
+                     q_rleid = rleid(value),#Identify each group of consecutive values
+                     flag_dryver = 0)] #Create flag field)
+  
+  #Flag negative values
+  in_gaugetab[value < 0, flag_dryver := flag_dryver + 1]
+  
+  #Flag when more than 10 identical values in a row or when a single zero-flow
+  in_gaugetab[, flag_dryver := flag_dryver +
+                ((value > 0) & (.N > 10)) +
+                ((value == 0) & (.N == 1)),
+              by=q_rleid]
+  
+  #Flag |log(Q + 0.01) - mean| > 6SD for julian day mean and SD of 5d mean of log(Q + 0.01)
+  in_gaugetab[, logmean5d := frollapply(log(value + 0.01), n = 5, align='center',
+                                        FUN=mean, na.rm = T)] %>% #Compute 5-day mean of log(Q+0.01)
+    .[, `:=`(jdaymean = mean(logmean5d, na.rm = T),
+             jdaysd = sd(logmean5d, na.rm = T)),
+      by = jday] %>% #Compute mean and SD of 5-day mean of log(Q + 0.01) by Julian day
+    .[abs(log(value + 0.01) - jdaymean) > (6 * jdaysd),
+      flag_dryver := flag_dryver + 1]
+  
+  return(in_gaugetab)
+}
+
+
+#------ plot_daily_q_timeseries ----------------------
+#' Plot a daily time series
+#'
+#' Creates a plot of daily discharge ({m^3}/s) for a gauging station,
+#' with flags for 0-flow values and potential outliers.
+#' Save plot to png if path is provided.
+#'
+#' @param gaugestats_record \link[data.table]{data.table} of formatted daily
+#' discharge records for a single station. Must contain at least five columns:
+#' \code{gaugeid, dates, value, flag_dryver} \cr
+#' @param outpath (character) path for writing output png plot (default is no plotting).
+#'
+#' @details the output graphs show the time series of daily streamflow values
+#' for the station. For the flagging criteria, see documentation for \code{\link{flag_outliers}}.
+#' \itemize{
+#'   \item The y-axis is square-root transformed.
+#'   \item Individual points show daily discharge values (in {m^3}/s).
+#'   \item blue lines link daily values (which may result in unusual patterns due to missing years).
+#'   \item red points are zero-flow flow values.
+#'   \item green points are non-zero flow daily values statistically flagged as potential outliers .
+#'   \item black points are zero-flow values flagged as potential outliers.
+#' }
+#'
+#' @return plot
+#'
+#' @export
+plot_daily_q_timeseries <- function(in_dt, outdir=NULL) {
+  #Read and format discharge records
+  if (in_dt[,.N>1] &
+      ('value' %in% names(in_dt))) {
+    gaugetab <- flag_outliers(copy(in_dt))
+  } 
+  
+  # else {
+  #   gaugetab <- readformatGRDC(in_dt$path) %>%
+  #     flagGRDCoutliers %>%
+  #     .[, dates := as.Date(dates)] %>%
+  #     .[!is.na(value), missingdays := diny(year)-.N, by= 'year']
+  # }
+  
+  #Plot time series
+  qtiles <- union(gaugetab[, min(value, na.rm=T)],
+                  gaugetab[, quantile(value, probs=seq(0, 1, 0.1), na.rm=T)])
+  
+  rawplot <- ggplot(gaugetab,
+                    aes(x=dates, y=value)) +
+    geom_line(color='#045a8d', size=1, alpha=1/5) +
+    geom_point(data = gaugetab[flag_dryver == 0 & value > 0,],
+               color='#045a8d', size=1, alpha=1/3) +
+    geom_point(data = gaugetab[flag_dryver > 0 & value > 0,],
+               color='green') +
+    geom_point(data = gaugetab[flag_dryver == 0 & value == 0,],
+               color='red') +
+    geom_point(data = gaugetab[flag_dryver > 0 & value == 0,],
+               color='black') +
+    scale_y_sqrt(breaks=qtiles, labels=qtiles) +
+    scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+    labs(y='Discharge (m3/s)',
+         title=paste0('GRDC: ', in_dt$gaugeid)) +
+    coord_cartesian(expand=0, clip='off')+
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust=1),
+          axis.text.y = element_text())
+  
+  # if (showmissing) {
+  #   rawplot <- rawplot +
+  #     geom_point(data=gaugetab[missingdays >= maxgap,], 
+  #                color='black', alpha=1/10)
+  # }
+  
+  if (!is.null(outdir)) {
+    outpath <-  file.path(outdir, paste0(unique(in_dt$gaugeid), '.png'))
+    
+    if (!(file.exists(outpath))) {
+      print(paste0("Saving ", outpath, "..."))
+      ggsave(filename = outpath,
+             plot = rawplot, device = 'png',
+             width = 10, height = 10, units='in', dpi = 300)
+    }
+  } else {
+    return(outpath)
+  }
+}
+
+#------ plotGSIMtimeseries ----------------------
+#' Plot a GSIM time series
+#'
+#' Creates a plot of monthly discharge ({m^3}/s) for a GSIM gauging stations
+#' Save plot to png if path is provided.
+#'
+#' @param GSIMgaugestats_record a data containing structure  with
+#' a column called "path" towards a standard montly GSIM text file containing.
+#' In this project, e.g. the output from \code{\link{comp_GSIMdurfreq}}.
+#' @param outpath (character) path for writing output png plot (default is no plotting).
+#' @param maxgap (integer) threshold number of missing daily records to consider a calendar year unfit for analysis.
+#' @param showmissing (logical) whether to show records in years with number of missing daily records beyond \code{maxgap}.
+#'
+#' @details Daily streamflow records from GSIM stations are unavailable. Therefore,
+#' the graph shows the following:
+#' \itemize{
+#'   \item The y-axis is square-root transformed.
+#'   \item Blue points: mean monthly discharge
+#'   \item Light blue background shading: mean ± 2SD monthly discharge
+#'   \item Black points: minimum and maximum monthly discharge
+#'   \item Red points show minimum monthly discharge values equal to 0
+#'   \item Purple points show months for which all daily discharge values are equal to 0.
+#' }
+#'
+#' @return plot
+#'
+#' @source Gudmundsson, L., Do, H. X., Leonard, M., & Westra, S. (2018). The Global
+#'   Streamflow Indices and Metadata Archive (GSIM) – Part 2: Quality control,
+#'   time-series indices and homogeneity assessment. Earth System Science Data,
+#'   10(2), 787–804. https://doi.org/10.5194/essd-10-787-2018
+#'
+#' @export
+plot_gsim_q_timeseries <- function(in_dt, outpath=NULL) {
+  #Read and format discharge records
+  gaugetab <- copy(in_dt) %>%
+    .[!is.na(MEAN),] %>%
+    setorder(date)
+  
+  #Format for plotting: compute MEAN - 2*SD if > MIN, otherwise MIN
+  gaugetab[, `:=`(ribbonlow = max(c(MEAN-2*SD, MIN)),
+                  ribbonhigh = min(c(MEAN+2*SD, MAX))
+  ), by=date]
+  
+  #Plot time series
+  qtiles <- gaugetab[, quantile(union(MIN, MAX), probs=seq(0, 1, 0.1))]
+  
+  rawplot <- ggplot(gaugetab[missingdays < maxgap,], aes(x=date, y=MEAN)) +
+    geom_line(color='#045a8d', size=1, alpha=1/3) +
+    geom_point(data=gaugetab[(missingdays < maxgap) & (MEAN>0),],
+               color='#045a8d', size=1, alpha=1/2) +
+    geom_point(data=gaugetab[(missingdays < maxgap) & (MEAN==0),],
+               color='red', size=1, alpha=1/2) +
+    geom_ribbon(aes(ymin = ribbonlow, ymax = ribbonhigh), color='lightblue', alpha=1/4) +
+    geom_point(data=gaugetab[(missingdays < maxgap) & (MIN>0),],
+               aes(y = MIN), color='black', alpha=1/2) +
+    geom_point(data=gaugetab[(missingdays < maxgap) & (MIN==0),],
+               aes(y = MIN), color='darkred', alpha=1/2) +
+    geom_point(data=gaugetab[(missingdays < maxgap) & (MAX>0),],
+               aes(y = MAX), color='black', alpha=1/2) +
+    geom_point(data=gaugetab[(missingdays < maxgap) & (MAX==0),],
+               aes(y = MAX), color='purple', alpha=1/2) +
+    scale_y_sqrt(breaks=qtiles, labels=qtiles) +
+    scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
+    labs(y='Discharge (m3/s)',
+         title=paste0('GSIM: ', GSIMgaugestats_record$gsim_no)) +
+    coord_cartesian(expand=0, clip='off')+
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust=1),
+          axis.text.y = element_text())
+  
+  if (showmissing) {
+    gaugetab_removed <- gaugetab[missingdays > maxgap,]
+    rawplot <- rawplot +
+      geom_point(data=gaugetab[MEAN>0,],
+                 color='#045a8d', size=1, alpha=1/5) +
+      geom_point(data=gaugetab[(missingdays < maxgap) & (MEAN==0),],
+                 color='red', size=1, alpha=1/5) +
+      geom_point(data=gaugetab[(missingdays < maxgap) & (MIN>0),],
+                 aes(y = MIN), color='black', alpha=1/5) +
+      geom_point(data=gaugetab[(missingdays < maxgap) & (MIN==0),],
+                 aes(y = MIN), color='darkred', alpha=1/5) +
+      geom_point(data=gaugetab[(missingdays < maxgap) & (MAX>0),],
+                 aes(y = MAX), color='black', alpha=1/5) +
+      geom_point(data=gaugetab[(missingdays < maxgap) & (MAX==0),],
+                 aes(y = MAX), color='purple', alpha=1/5)
+  }
+  
+  if (!is.null(outdir)) {
+    outpath <-  file.path(outdir, paste0(unique(in_dt$gaugeid), '.png'))
+    
+    if (!(file.exists(outpath))) {
+      print(paste0("Saving ", outpath, "..."))
+      ggsave(filename = outpath, plot = rawplot, device = 'png',
+             width = 10, height = 10, units='in', dpi = 300)
+    }
+  } else {
+    return(rawplot)
+  }
 }
 
 #---------------------------- WORKFLOW FUNCTIONS -------------------------------
@@ -155,9 +399,6 @@ download_spanish_stations <- function(output_dir) {
               metadata=stations_metadata))
 }
 
-in_paths <- tar_read(spanish_rawfiles)$paths
-in_metadata <- tar_read(spanish_rawfiles)$metadata
-
 select_spanish_stations <- function(in_paths, in_metadata,
                                     start_date ="1981-01-01",
                                     end_date ="2019-12-31") {
@@ -190,8 +431,14 @@ select_spanish_stations <- function(in_paths, in_metadata,
   }) %>% 
     rbindlist
   
-
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36) 
   
+  function_output <- list(
+    output_ts = station_less36_mon,
+    gauge_ids = station_less36_mon[, unique(gaugeid)]
+  )
+  
+  return(function_output)
 }
 
 
@@ -285,14 +532,14 @@ select_smires_stations <- function(path, shp_path,
   out[value %in% c(-999, -99, -9999, 999, 9999), value := NA] 
   
   # find the stations with records for at least 36 months
-  output_ts <- select_min_fullmonths(out, min_months = 36)
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36)
   
-  out <- list(
+  function_output <- list(
     output_ts = station_less36_mon,
     gauge_ids = station_less36_mon[, unique(gaugeid)]
   )
   
-  return(out)
+  return(function_output)
 }
 
 select_corsica_stations <- function(path, shp_path,
@@ -337,14 +584,14 @@ select_corsica_stations <- function(path, shp_path,
   out[, value := value/1000]
 
   # find the stations with records for at least 36 months
-  output_ts <- select_min_fullmonths(out, min_months = 36)
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36)
   
-  out <- list(
+  function_output <- list(
     output_ts = station_less36_mon,
     gauge_ids = station_less36_mon[, unique(gaugeid)]
   )
   
-  return(out)
+  return(function_output)
 }
 
 select_italian_emr_stations <- function(path, shp_path,
@@ -387,14 +634,14 @@ select_italian_emr_stations <- function(path, shp_path,
     rbindlist
   
   # find the stations with records for at least 36 months
-  output_ts <- select_min_fullmonths(out, min_months = 36)
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36)
   
-  out <- list(
+  function_output <- list(
     output_ts = station_less36_mon,
     gauge_ids = station_less36_mon[, unique(gaugeid)]
   )
   
-  return(out)
+  return(function_output)
 }
 
 select_italian_ispra_stations <- function(path, shp_path,
@@ -433,14 +680,14 @@ select_italian_ispra_stations <- function(path, shp_path,
     rbindlist
   
   # find the stations with records for at least 36 months
-  output_ts <- select_min_fullmonths(out, min_months = 36)
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36)
   
-  out <- list(
+  function_output <- list(
     output_ts = station_less36_mon,
     gauge_ids = station_less36_mon[, unique(gaugeid)]
   )
   
-  return(out)
+  return(function_output)
 }
 
 select_italian_arpal_stations <- function(path, shp_path,
@@ -480,14 +727,14 @@ select_italian_arpal_stations <- function(path, shp_path,
     rbindlist
   
   # find the stations with records for at least 36 months
-  output_ts <- select_min_fullmonths(out, min_months = 36)
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36)
   
-  out <- list(
+  function_output <- list(
     output_ts = station_less36_mon,
     gauge_ids = station_less36_mon[, unique(gaugeid)]
   )
   
-  return(out)
+  return(function_output)
 }
 
 select_italian_arpas_stations <- function(path, shp_path,
@@ -532,12 +779,42 @@ select_italian_arpas_stations <- function(path, shp_path,
     rbindlist
   
   # find the stations with records for at least 36 months
-  output_ts <- select_min_fullmonths(out, min_months = 36)
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36)
   
-  out <- list(
+  function_output <- list(
     output_ts = station_less36_mon,
     gauge_ids = station_less36_mon[, unique(gaugeid)]
   )
   
-  return(out)
+  return(function_output)
 }
+
+remove_records <- function(in_daily_paths) {
+  #rbind everything
+  
+  #Remove all gauges with 0 values that have at least 99% of integer values as not reliable (see GRDC_NO 6140700 as example)
+  GRDCtoremove_allinteger <- data.table(
+    GRDC_NO = GRDCstatsdt[integerperc_o1800 >= 0.95 &
+                            intermittent_o1800 == 1, GRDC_NO],
+    flag = 'removed',
+    comment = 'All integer discharge values'
+  )
+  
+  #------ Remove stations based on examination of plots and data series
+  daily_q_records_to_remove <- list(
+    #C(gaugeid, 'removed' or 'to inspect' or'inspected', comment)
+  ) %>%
+    rbindlist %>%
+    as.data.table %>%
+    setnames(c('gaugeid', 'flag', 'comment'))
+  
+  
+  gsim_q_records_to_remove <- list(
+    #C(gaugeid, 'removed' or 'to inspect' or'inspected', comment)
+  )%>%
+    rbindlist %>%
+    as.data.table %>%
+    setnames(c('gaugeid', 'flag', 'comment'))
+}
+
+
