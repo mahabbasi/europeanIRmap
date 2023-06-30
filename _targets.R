@@ -3,7 +3,7 @@ library(tarchetypes)
 tar_option_set(packages = c("sf", "data.table", "tidyverse", "here"),
                memory = "transient", garbage_collection = TRUE, format = "qs")
 tar_source("src/pre_processing_functions.R")
-# tar_source("src/used_libraries.R")
+tar_source("src/used_libraries.R")
 
 # define the data path 
 rootpath = here::here()
@@ -19,6 +19,11 @@ if (dir.exists(preprocessed_path)) {
 }
 # ----------------------- pre-processing: select interested European stations -----------------
 plan_preprocess = tar_plan(
+  tar_target(
+    name = 'spanish_rawfiles_path',
+    download_spanish_stations(file.path(rootpath, "Data", "Spain_SAIH"))
+  ),
+  
   tar_target(
     name = "input_files",
     command = list(
@@ -119,7 +124,7 @@ plan_preprocess = tar_plan(
         name = "write_files",
         command = {
           data.table::fwrite(
-            corsica_stations, file = file.path(datapath,"preprocessed/corsica_stations.csv"))
+            corsica_stations$output_ts, file = file.path(datapath,"preprocessed/corsica_stations.csv"))
           data.table::fwrite(
             grdc_stations$output_dt, file = file.path(datapath,"preprocessed/grdc_updated_stations.csv"))
           data.table::fwrite(
@@ -131,13 +136,13 @@ plan_preprocess = tar_plan(
           data.table::fwrite(
             smires_stations$output_ts, file = file.path(datapath, "preprocessed/smires_stations.csv"))
           data.table::fwrite(
-            emr_stations, file = file.path(datapath, "preprocessed/emr_stations.csv"))
+            emr_stations$output_ts, file = file.path(datapath, "preprocessed/emr_stations.csv"))
           data.table::fwrite(
-            ispra_stations, file = file.path(datapath,"preprocessed/ispra_stations.csv"))
+            ispra_stations$output_ts, file = file.path(datapath,"preprocessed/ispra_stations.csv"))
           data.table::fwrite(
-            arpal_stations, file = file.path(datapath, "preprocessed/arpal_stations.csv"))
+            arpal_stations$output_ts, file = file.path(datapath, "preprocessed/arpal_stations.csv"))
           data.table::fwrite(
-            arpas_stations, file = file.path(datapath, "preprocessed/arpas_stations.csv"))
+            arpas_stations$output_ts, file = file.path(datapath, "preprocessed/arpas_stations.csv"))
         }, format = "file"
   )
 )
