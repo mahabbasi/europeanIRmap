@@ -1,62 +1,64 @@
 library(targets)
 library(tarchetypes)
 tar_option_set(packages = c("sf", "data.table", "tidyverse", "here"),
-               memory = "transient", garbage_collection = TRUE, format = "qs")
+               memory = "transient", garbage_collection = TRUE, format = "qs",
+               future::plan(future::multisession, workers = 10))
 tar_source("src/pre_processing_functions.R")
 # tar_source("src/used_libraries.R")
 
 # define the data path 
 rootpath = here::here()
-datapath = file.path(rootpath, "Data/targets")
-shp_path = file.path(rootpath, "Data/shp/eu_stations/spatial_joint_eu_stations.shp")
+datapath = file.path(rootpath, "data")
+resultpath =  file.path(rootpath, "result")
+shp_path = file.path(rootpath, "data/shp/eu_stations/spatial_joint_eu_stations.shp")
+preprocessed_path = file.path(resultpath, "targets/preprocessed")
 
-preprocessed_path <- file.path(datapath, "preprocessed")
+if (!file.exists(resultpath)) dir.create(resultpath, recursive = TRUE)
+if(!file.exists(preprocessed_path)) dir.create(preprocessed_path, recursive = TRUE)
 
-if (dir.exists(preprocessed_path)) {
-  print("Folder exists!")
-} else {
-  dir.create(preprocessed_path)
-}
+# define the start and end dates of the period
+start_date = as.Date("1981-01-01")
+end_date = as.Date("2019-12-31")
 # ----------------------- pre-processing: select interested European stations -----------------
 plan_preprocess = tar_plan(
   tar_target(
     name = "input_files",
     command = list(
       list.files(
-        path = file.path(datapath, "raw/2023-04-20_08-00_Europe1"),
+        path = file.path(datapath, "targets/raw/2023-04-20_08-00_Europe1"),
         pattern = "txt",
         full.names = TRUE
       ),
       list.files(
-        path = file.path(datapath, "raw/corsica"),
+        path = file.path(datapath, "targets/raw/corsica"),
         pattern = "csv",
         full.names = TRUE
       ),
       file.path(datapath,
-                "raw/harmonized_dataset_cleaned_new.csv"
+                "targets/raw/harmonized_dataset_cleaned_new.csv"
                 ),
       list.files(
-        path = file.path(datapath, "raw/Smires/uuid"),
+        path = file.path(datapath, "targets/raw/Smires/uuid"),
         pattern = "csv",
         full.names = TRUE
         ),
       list.files(
-        path = file.path(datapath, "raw/Data_IT/emr"),
+        path = file.path(datapath, "targets/raw/Data_IT/emr"),
         pattern = "csv",
         full.names = TRUE
         ),
       list.files(
-        path = file.path(datapath, "raw/Data_IT/ispra"),
+        path = file.path(datapath, "targets/raw/Data_IT/ispra"),
         pattern = "csv",
         full.names = TRUE
         ),
       list.files(
-        path = file.path(datapath, "raw/Data_IT/lom"),
+        path = file.path(datapath, "targets/raw/Data_IT/lom"),
         pattern = "csv",
         full.names = TRUE
         ),
       list.files(
-        path = file.path(datapath, "raw/Data_IT/sar"),
+        path = file.path(datapath, "targets/raw/Data_IT/sar"),
         pattern = "csv",
         full.names = TRUE
         )
@@ -119,25 +121,39 @@ plan_preprocess = tar_plan(
         name = "write_files",
         command = {
           data.table::fwrite(
-            corsica_stations, file = file.path(datapath,"preprocessed/corsica_stations.csv"))
+            corsica_stations, file = file.path(resultpath,"targets/preprocessed/corsica_stations.csv"))
           data.table::fwrite(
-            grdc_stations$output_dt, file = file.path(datapath,"preprocessed/grdc_updated_stations.csv"))
+            grdc_stations$output_dt, file = file.path(resultpath,"targets/preprocessed/grdc_updated_stations.csv"))
           data.table::fwrite(
-            grdc_old_stations, file = file.path(datapath, "preprocessed/grdc_old_139stations.csv"))
+            grdc_old_stations, file = file.path(resultpath, "targets/preprocessed/grdc_old_139stations.csv"))
           data.table::fwrite(
-            gsim_stations, file = file.path(datapath, "preprocessed/gsim_stations.csv"))
+            gsim_stations, file = file.path(resultpath, "targets/preprocessed/gsim_stations.csv"))
           data.table::fwrite(
-            rbis_stations, file = file.path(datapath, "preprocessed/rbis_stations.csv"))
+            rbis_stations, file = file.path(resultpath, "targets/preprocessed/rbis_stations.csv"))
           data.table::fwrite(
-            smires_stations$output_ts, file = file.path(datapath, "preprocessed/smires_stations.csv"))
+            smires_stations$output_ts, file = file.path(resultpath, "targets/preprocessed/smires_stations.csv"))
           data.table::fwrite(
-            emr_stations, file = file.path(datapath, "preprocessed/emr_stations.csv"))
+            emr_stations, file = file.path(resultpath, "targets/preprocessed/emr_stations.csv"))
           data.table::fwrite(
-            ispra_stations, file = file.path(datapath,"preprocessed/ispra_stations.csv"))
+            ispra_stations, file = file.path(resultpath,"targets/preprocessed/ispra_stations.csv"))
           data.table::fwrite(
-            arpal_stations, file = file.path(datapath, "preprocessed/arpal_stations.csv"))
+            arpal_stations, file = file.path(resultpath, "targets/preprocessed/arpal_stations.csv"))
           data.table::fwrite(
-            arpas_stations, file = file.path(datapath, "preprocessed/arpas_stations.csv"))
+            arpas_stations, file = file.path(resultpath, "targets/preprocessed/arpas_stations.csv"))
         }, format = "file"
   )
 )
+# ----------------------- pre-processing: computing the predictors -----------------
+plan_compute_predictors = tar_plan(
+  tar_target(
+    name = "hr_path",
+    command = file.path(datapath,
+                        "predictors/HR/waterGAP_streamflow_stations.csv"
+    ), format = "file"
+  ),
+  tar_target(
+    name = "hr_predictors",
+    command = calc_highres_predictors(hr_path)
+  )
+)
+
