@@ -201,6 +201,7 @@ plot_daily_q_timeseries <- function(in_dt, outdir=NULL) {
   #     .[!is.na(value), missingdays := diny(year)-.N, by= 'year']
   # }
   
+  
   #Plot time series
   qtiles <- union(gaugetab[, min(value, na.rm=T)],
                   gaugetab[, quantile(value, probs=seq(0, 1, 0.1), na.rm=T)])
@@ -222,7 +223,7 @@ plot_daily_q_timeseries <- function(in_dt, outdir=NULL) {
          title=paste0('GRDC: ', in_dt$gaugeid)) +
     coord_cartesian(expand=0, clip='off')+
     theme_bw() +
-    theme(axis.text.x = element_text(angle = 45, hjust=1),
+    theme(axis.text.x = element_text(angle = 44, hjust=1),
           axis.text.y = element_text())
   
   # if (showmissing) {
@@ -454,7 +455,7 @@ select_new_grdc_stations <- function(path, shp_path){
   output_dt <- grdc_updated_stations_dt$output_ts[
     gaugeid %in% interested_grdc_stations,]
   
-  updated_grdc_stations_id <- unique(output_dt$gaugeids)
+  updated_grdc_stations_id <- unique(output_dt$gaugeid)
   
   old_grdc_stations_id <- base::setdiff(interested_grdc_stations,
                                         updated_grdc_stations_id)
