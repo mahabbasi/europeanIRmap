@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-### ---------------- Functions for selecting the interested stations ----------------
-=======
+
 #---------------------------- UTILITY FUNCTIONS --------------------------------
->>>>>>> origin/dev_merged
 grdc_txt2csv <- function(path_list, 
                          start_date ="1981-01-01",
                          end_date ="2019-12-31"){

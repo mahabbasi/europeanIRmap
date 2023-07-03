@@ -13,14 +13,6 @@ resultpath =  file.path(rootpath, "result")
 shp_path = file.path(rootpath, "data/shp/eu_stations/spatial_joint_eu_stations.shp")
 preprocessed_path = file.path(resultpath, "targets/preprocessed")
 
-<<<<<<< HEAD
-if (!file.exists(resultpath)) dir.create(resultpath, recursive = TRUE)
-if(!file.exists(preprocessed_path)) dir.create(preprocessed_path, recursive = TRUE)
-
-# define the start and end dates of the period
-start_date = as.Date("1981-01-01")
-end_date = as.Date("2019-12-31")
-=======
 resultspath = file.path(rootpath, "results")
 check_plot_path = file.path(resultspath, 'ts_plots')
 preprocessed_path <- file.path(resultspath, "preprocessed")
@@ -33,7 +25,6 @@ lapply(list(resultspath, check_plot_path, preprocessed_path), function(path) {
   }
 })
 
->>>>>>> origin/dev_merged
 # ----------------------- pre-processing: select interested European stations -----------------
 plan_preprocess = tar_plan(
   tar_target(
@@ -140,31 +131,6 @@ plan_preprocess = tar_plan(
   ),
   
   tar_target(
-<<<<<<< HEAD
-        name = "write_files",
-        command = {
-          data.table::fwrite(
-            corsica_stations, file = file.path(resultpath,"targets/preprocessed/corsica_stations.csv"))
-          data.table::fwrite(
-            grdc_stations$output_dt, file = file.path(resultpath,"targets/preprocessed/grdc_updated_stations.csv"))
-          data.table::fwrite(
-            grdc_old_stations, file = file.path(resultpath, "targets/preprocessed/grdc_old_139stations.csv"))
-          data.table::fwrite(
-            gsim_stations, file = file.path(resultpath, "targets/preprocessed/gsim_stations.csv"))
-          data.table::fwrite(
-            rbis_stations, file = file.path(resultpath, "targets/preprocessed/rbis_stations.csv"))
-          data.table::fwrite(
-            smires_stations$output_ts, file = file.path(resultpath, "targets/preprocessed/smires_stations.csv"))
-          data.table::fwrite(
-            emr_stations, file = file.path(resultpath, "targets/preprocessed/emr_stations.csv"))
-          data.table::fwrite(
-            ispra_stations, file = file.path(resultpath,"targets/preprocessed/ispra_stations.csv"))
-          data.table::fwrite(
-            arpal_stations, file = file.path(resultpath, "targets/preprocessed/arpal_stations.csv"))
-          data.table::fwrite(
-            arpas_stations, file = file.path(resultpath, "targets/preprocessed/arpas_stations.csv"))
-        }, format = "file"
-=======
     name = 'spanish_stations',
     command = select_spanish_stations(in_paths = spanish_rawfiles$paths,
                                       in_metadata =  spanish_rawfiles$metadata
@@ -213,7 +179,6 @@ plan_preprocess = tar_plan(
                                                   outdir=check_plot_path))
     }
     )
->>>>>>> origin/dev_merged
   )
 )
 # ----------------------- pre-processing: computing the predictors -----------------
