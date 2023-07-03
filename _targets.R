@@ -4,7 +4,7 @@ tar_option_set(packages = c("sf", "data.table", "tidyverse", "here"),
                memory = "transient", garbage_collection = TRUE, format = "qs",
                future::plan(future::multisession, workers = 10))
 tar_source("src/pre_processing_functions.R")
-# tar_source("src/used_libraries.R")
+tar_source("src/used_libraries.R")
 
 # define the data path 
 rootpath = here::here()
@@ -13,14 +13,34 @@ resultpath =  file.path(rootpath, "result")
 shp_path = file.path(rootpath, "data/shp/eu_stations/spatial_joint_eu_stations.shp")
 preprocessed_path = file.path(resultpath, "targets/preprocessed")
 
+<<<<<<< HEAD
 if (!file.exists(resultpath)) dir.create(resultpath, recursive = TRUE)
 if(!file.exists(preprocessed_path)) dir.create(preprocessed_path, recursive = TRUE)
 
 # define the start and end dates of the period
 start_date = as.Date("1981-01-01")
 end_date = as.Date("2019-12-31")
+=======
+resultspath = file.path(rootpath, "results")
+check_plot_path = file.path(resultspath, 'ts_plots')
+preprocessed_path <- file.path(resultspath, "preprocessed")
+
+lapply(list(resultspath, check_plot_path, preprocessed_path), function(path) {
+  if (dir.exists(path)) {
+    print("Folder exists!")
+  } else {
+    dir.create(path)
+  }
+})
+
+>>>>>>> origin/dev_merged
 # ----------------------- pre-processing: select interested European stations -----------------
 plan_preprocess = tar_plan(
+  tar_target(
+    name = 'spanish_rawfiles',
+    download_spanish_stations(file.path(rootpath, "Data", "Spain_SAIH"))
+  ),
+  
   tar_target(
     name = "input_files",
     command = list(
@@ -91,6 +111,7 @@ plan_preprocess = tar_plan(
                                    shp_path = shp_path,
                                    dataset_name = "RBIS")
   ),
+
   tar_target(
     name = "smires_stations",
     command = select_smires_stations(path = input_files[[4]],
@@ -117,7 +138,9 @@ plan_preprocess = tar_plan(
     command =  select_italian_arpas_stations(path = input_files[[8]],
                                              shp_path = shp_path)
   ),
+  
   tar_target(
+<<<<<<< HEAD
         name = "write_files",
         command = {
           data.table::fwrite(
@@ -141,6 +164,56 @@ plan_preprocess = tar_plan(
           data.table::fwrite(
             arpas_stations, file = file.path(resultpath, "targets/preprocessed/arpas_stations.csv"))
         }, format = "file"
+=======
+    name = 'spanish_stations',
+    command = select_spanish_stations(in_paths = spanish_rawfiles$paths,
+                                      in_metadata =  spanish_rawfiles$metadata
+    )
+  ),
+  
+  # tar_target(
+  #       name = "write_files",
+  #       command = {
+  #         data.table::fwrite(
+  #           corsica_stations$output_ts, file = file.path(datapath,"preprocessed/corsica_stations.csv"))
+  #         data.table::fwrite(
+  #           grdc_stations$output_dt, file = file.path(datapath,"preprocessed/grdc_updated_stations.csv"))
+  #         data.table::fwrite(
+  #           grdc_old_stations, file = file.path(datapath, "preprocessed/grdc_old_139stations.csv"))
+  #         data.table::fwrite(
+  #           gsim_stations, file = file.path(datapath, "preprocessed/gsim_stations.csv"))
+  #         data.table::fwrite(
+  #           rbis_stations, file = file.path(datapath, "preprocessed/rbis_stations.csv"))
+  #         data.table::fwrite(
+  #           smires_stations$output_ts, file = file.path(datapath, "preprocessed/smires_stations.csv"))
+  #         data.table::fwrite(
+  #           emr_stations$output_ts, file = file.path(datapath, "preprocessed/emr_stations.csv"))
+  #         data.table::fwrite(
+  #           ispra_stations$output_ts, file = file.path(datapath,"preprocessed/ispra_stations.csv"))
+  #         data.table::fwrite(
+  #           arpal_stations$output_ts, file = file.path(datapath, "preprocessed/arpal_stations.csv"))
+  #         data.table::fwrite(
+  #           arpas_stations$output_ts, file = file.path(datapath, "preprocessed/arpas_stations.csv"))
+  #       }, format = "file"
+  # ),
+  
+  tar_target(
+    ts_plots,
+    lapply(list(corsica_stations$output_ts,
+                grdc_stations$output_dt,
+                grdc_old_stations,
+                smires_stations$output_ts,
+                emr_stations$output_ts,
+                ispra_stations$output_ts,
+                arpal_stations$output_ts,
+                arpas_stations$output_ts),
+    function(in_dt) {
+      lapply(unique(in_dt$gaugeid), 
+             function(id) plot_daily_q_timeseries(in_dt[gaugeid == id,], 
+                                                  outdir=check_plot_path))
+    }
+    )
+>>>>>>> origin/dev_merged
   )
 )
 # ----------------------- pre-processing: computing the predictors -----------------
