@@ -182,16 +182,5 @@ plan_preprocess = tar_plan(
   )
 )
 # ----------------------- pre-processing: computing the predictors -----------------
-plan_compute_predictors = tar_plan(
-  tar_target(
-    name = "hr_path",
-    command = file.path(datapath,
-                        "predictors/HR/waterGAP_streamflow_stations.csv"
-    ), format = "file"
-  ),
-  tar_target(
-    name = "hr_predictors",
-    command = calc_highres_predictors(hr_path)
-  )
-)
+
 
