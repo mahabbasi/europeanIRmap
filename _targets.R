@@ -8,20 +8,24 @@ tar_source("src/used_libraries.R")
 # define the data path 
 rootpath = here::here()
 datapath = file.path(rootpath, "Data/targets")
-shp_path = file.path(rootpath, "Data/shp/eu_stations/spatial_joint_eu_stations.shp")
+shp_path = file.path(rootpath, "Data/shp/eu_stations/european_gaugestations.shp")
 
 resultspath = file.path(rootpath, "results")
 check_plot_path = file.path(resultspath, 'ts_plots')
-preprocessed_path <- file.path(resultspath, "preprocessed")
+preprocessed_path = file.path(resultspath, "preprocessed")
+check_plot_set1 = file.path(resultspath, 'ts_plots/set1')
+check_plot_set2 = file.path(resultspath, 'ts_plots/set2')
 
-lapply(list(resultspath, check_plot_path, preprocessed_path), function(path) {
-  if (dir.exists(path)) {
-    print("Folder exists!")
-  } else {
-    dir.create(path)
+lapply(list(resultspath, check_plot_path, preprocessed_path,
+            check_plot_set1, check_plot_set2), function(path) {
+  if (!dir.exists(path)) {
+    dir.create(path, recursive = TRUE)
   }
 })
 
+# define start and end dates
+start_date = as.Date("1981-01-01")
+end_date = as.Date("2019-12-31")
 # ----------------------- pre-processing: select interested European stations -----------------
 plan_preprocess = tar_plan(
   tar_target(
@@ -169,12 +173,21 @@ plan_preprocess = tar_plan(
                 emr_stations$output_ts,
                 ispra_stations$output_ts,
                 arpal_stations$output_ts,
-                arpas_stations$output_ts),
+                arpas_stations$output_ts,
+                spanish_stations$output_ts,
+                gsim_stations$output_ts,
+                rbis_stations$output_ts),
     function(in_dt) {
-      lapply(unique(in_dt$gaugeid), 
-             function(id) plot_daily_q_timeseries(in_dt[gaugeid == id,], 
+      lapply(unique(in_dt$gaugeid),
+             function(id) plot_daily_q_timeseries(in_dt[gaugeid == id,],
                                                   outdir=check_plot_path))
     }
     )
+  ),
+  tar_target(
+    name = 'split_plots',
+    command = split_file_random(source_path = check_plot_path,
+                                set1_path = check_plot_set1,
+                                set2_path = check_plot_set2)
   )
 )
