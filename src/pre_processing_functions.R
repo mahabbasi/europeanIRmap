@@ -1,8 +1,8 @@
 #---------------------------- UTILITY FUNCTIONS --------------------------------
-grdc_txt2csv <- function(path_list, 
-                         start_date ="1981-01-01",
-                         end_date ="2019-12-31"){
+grdc_txt2csv <- function(path_list){
   
+  start_date <<- start_date
+  end_date <<- end_date
   
   out <- lapply(seq_along(path_list), function(i){
     
@@ -28,7 +28,7 @@ grdc_txt2csv <- function(path_list,
     
     # join the values of station by matching dates
     all_dt <- merge(all_dt, m, by="dates", all.x=T) %>%
-      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),] %>%
+      .[dates >= start_date & dates <= end_date,] %>%
       .[, gaugeid := gaugeid]
     
     return(all_dt)
@@ -61,27 +61,28 @@ grdc_csv2shp <- function(data_path, boundary_path, gauge_ids){
     sf::st_as_sf(.,
                  coords = c("long", "lat")) %>% 
     st_set_crs(4236) %>% 
-    st_transform(st_crs(eu_countries)) %>%
+    st_transform(st_crs(4236)) %>%
     sf::st_intersection(., eu_countries)
   
-  lon_lat <- joined_sf %>% 
-    sf::st_coordinates() %>% 
-    as.data.table()
-  
   eu_final_sf <- joined_sf %>% 
-    sf::st_drop_geometry() %>% 
-    dplyr::select(-c(23:79)) %>% 
-    dplyr::mutate(lon_lat) %>% 
-    sf::st_as_sf(.,
-                 coords = c("X", "Y")) %>% 
-    st_set_crs(st_crs(eu_countries))
+    dplyr::select(-c(23:79)) 
   
 }
 
-select_dataset <- function(shp_path, dataset_name = NULL, col_names = NULL){
-  m <- sf::st_read(dsn = shp_path) %>% 
+select_dataset <- function(shp_path, dataset_name = NULL,
+                           col_names = NULL){
+  
+  station_sf <- sf::st_read(dsn = shp_path, quiet = TRUE)
+  
+  interest_col = station_sf %>% 
     dplyr::filter(gaugdts == dataset_name) %>% 
     dplyr::pull(col_names)
+  
+  gauge_d =  station_sf %>% 
+    dplyr::filter(gaugdts == dataset_name) %>% 
+    dplyr::pull("gauge_d")
+  
+  return(list(interest_col, gauge_d))
 }
 
 select_min_fullmonths <- function(in_dt, min_months = 36) {
@@ -400,9 +401,14 @@ download_spanish_stations <- function(output_dir) {
               metadata=stations_metadata))
 }
 
-select_spanish_stations <- function(in_paths, in_metadata,
-                                    start_date ="1981-01-01",
-                                    end_date ="2019-12-31") {
+select_spanish_stations <- function(in_paths, in_metadata) {
+  
+  start_date <<- start_date
+  end_date <<- end_date
+  
+  spain_stations_id <- select_dataset(shp_path = shp_path,
+                                             dataset_name = "spanish",
+                                             col_names = "gauge_d")[[1]]
   
   out <- lapply(seq_along(in_paths), function(i){
 
@@ -426,13 +432,15 @@ select_spanish_stations <- function(in_paths, in_metadata,
     
     # join the values of station by matching dates
     all_dt <- merge(all_dt, m, by=c("dates", "gaugeid"), all.x=T) %>%
-      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),]
+      .[dates >= start_date & dates <= end_date,]
     
     return(all_dt)
   }) %>% 
     rbindlist
   
-  station_less36_mon <- select_min_fullmonths(out, min_months = 36) 
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36) %>% 
+    .[gaugeid %in% spain_stations_id,]
+  # add the function to select spanish stations later
   
   function_output <- list(
     output_ts = station_less36_mon,
@@ -450,7 +458,7 @@ select_new_grdc_stations <- function(path, shp_path){
   # find the GRDC stations within the shapefile -> 2110 out of 3484
   interested_grdc_stations <- select_dataset(shp_path = shp_path,
                                              dataset_name = "GRDC",
-                                             col_names = "gauge_d")
+                                             col_names = "gauge_d")[[1]]
   # get the grdc station id within updated and old datasets.
   output_dt <- grdc_updated_stations_dt$output_ts[
     gaugeid %in% interested_grdc_stations,]
@@ -466,50 +474,87 @@ select_new_grdc_stations <- function(path, shp_path){
 }
 
 select_old_grdc_stations <- function(path, shp_path, old_grdc_stations_id){
-  grdc_dd_id_old <- sf::st_read(shp_path) %>% 
+  
+  start_date <<- start_date
+  
+  grdc_dd_id_old <- sf::st_read(shp_path, quiet = TRUE) %>% 
     dplyr::filter(gauge_d %in% old_grdc_stations_id) %>% 
     dplyr::pull(dd_id)
   
+  grdc_new_names = c("dates", old_grdc_stations_id)
+  
+  # read the stations and produce a long format data table
   output <- data.table::fread(path) %>% 
     dplyr::select(one_of(c("date", grdc_dd_id_old))) %>%
     dplyr::mutate(date = as.Date(date, format = "%m/%d/%Y")) %>%
-    dplyr::filter(date >= as.Date("1981-01-01")) %>% 
-    rename(dates = date) %>%
+    dplyr::filter(date >= start_date) %>% 
+    dplyr::rename_with(~grdc_new_names, .cols = everything()) %>%
     melt(id.vars='dates', variable.name='gaugeid')
   
-  return(output)
+  # find the stations with records for at least 36 months
+  station_less36_mon <- select_min_fullmonths(output, min_months = 36)
+  
+  function_output <- list(
+    output_ts = station_less36_mon,
+    gauge_ids = station_less36_mon[, unique(gaugeid)]
+  )
+  
+  return(function_output)
 }
 
 select_gsim_stations <- function(path, shp_path, dataset_name = "GSIM"){
   
+  start_date <<- start_date
+  
   # find the GSIM stations within the shapefile
-  gsim_stations_id <- select_dataset(shp_path = shp_path,
-                                     dataset_name = dataset_name,
-                                     col_names = "dd_id")
+  gsim_stations <- select_dataset(shp_path = shp_path,
+                                  dataset_name = dataset_name,
+                                  col_names = "dd_id")
+  
+  gsim_stations_dd_id = gsim_stations[[1]]
+  gsim_stations_gauge_d = gsim_stations[[2]]
+  
+  gsim_new_names = c("dates", gsim_stations_gauge_d)
   
   output <- data.table::fread(path) %>% 
-    dplyr::select(one_of(c("date", gsim_stations_id))) %>%
+    dplyr::select(one_of(c("date", gsim_stations_dd_id))) %>%
     dplyr::mutate(date = as.Date(date, format = "%m/%d/%Y")) %>%
-    dplyr::filter(date >= as.Date("1981-01-01")) %>% 
-    rename(dates = date)
-
-  return(output)
+    dplyr::filter(date >= start_date) %>% 
+    dplyr::rename_with(~gsim_new_names, .cols = everything()) %>%
+    melt(id.vars='dates', variable.name='gaugeid')
+  
+  # find the stations with records for at least 36 months
+  station_less36_mon <- select_min_fullmonths(output, min_months = 36)
+  
+  function_output <- list(
+    output_ts = station_less36_mon,
+    gauge_ids = station_less36_mon[, unique(gaugeid)]
+  )
+  
+  return(function_output)
 }
 
-select_smires_stations <- function(path, shp_path,
-                                   start_date ="1981-01-01",
-                                   end_date ="2019-12-31"){
+select_smires_stations <- function(path, shp_path){
   
-  smires_stations_id <- select_dataset(shp_path = shp_path,
+  start_date <<- start_date
+  end_date <<- end_date
+  
+  smires_stations_ls <- select_dataset(shp_path = shp_path,
                                        dataset_name = "smires",
                                        col_names = "dd_id")
+  
+  smires_stations_dd_id = smires_stations_ls[[1]]
+  smires_stations_gauge_d = smires_stations_ls[[2]]
+  
   out <- lapply(seq_along(path), function(i){
-    #extract GRDC unique ID by formatting path
+    
+    #extract smires unique ID by formatting path
     gaugeno <- strsplit(basename(path[i]), '[.]')[[1]][1]
-    gaugeid <- gaugeno
+    index = which(smires_stations_dd_id == gaugeno )
+    gaugeid <- smires_stations_gauge_d[index]
     
     
-    # read the GRDC text file for each station
+    # read the smires csv files for each station
     m <- data.table::fread(path[i], header = T, sep=",") %>%
       setnames('time', 'dates') %>% 
       setnames("streamflow", 'value') %>% 
@@ -521,10 +566,10 @@ select_smires_stations <- function(path, shp_path,
       as.Date(paste0(format(max(m$dates, na.rm=T), '%Y'),'-12-31')),
       "day"))
     
-    # join the values of station by matching dates
     all_dt <- merge(all_dt, m, by="dates", all.x=T) %>%
-      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),] %>%
-      .[, gaugeid := gaugeid]
+      .[dates >= start_date & dates <= end_date,] %>%
+      .[, gaugeid := gaugeid] %>% 
+      .[!is.na(gaugeid)]
     
     return(all_dt)
   }) %>% 
@@ -543,14 +588,14 @@ select_smires_stations <- function(path, shp_path,
   return(function_output)
 }
 
-select_corsica_stations <- function(path, shp_path,
-                                    start_date ="1981-01-01",
-                                    end_date ="2019-12-31"){
+select_corsica_stations <- function(path, shp_path){
+  
+  start_date <<- start_date
+  end_date <<- end_date
   
   # find the corsica stations within the shapefile
-  corsica_stations_id <- select_dataset(shp_path = shp_path,
-                                        dataset_name = "Corsica",
-                                        col_names = "gauge_d")
+  # corsica_stations_id <- select_dataset(shp_path = shp_path,
+  #                                       dataset_name = "Corsica")[['gauge_d']]
   
   out <- lapply(seq_along(path), function(i){
     #extract unique ID by formatting path
@@ -572,9 +617,8 @@ select_corsica_stations <- function(path, shp_path,
       as.Date(paste0(format(max(m$dates, na.rm=T), '%Y'),'-12-31')),
       "day"))
     
-    # join the values of station by matching dates
     all_dt <- merge(all_dt, m, by="dates", all.x=T) %>%
-      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),] %>%
+      .[dates >= start_date & dates <= end_date,] %>%
       .[, gaugeid := gaugeid]
     
     return(all_dt)
@@ -595,24 +639,30 @@ select_corsica_stations <- function(path, shp_path,
   return(function_output)
 }
 
-select_italian_emr_stations <- function(path, shp_path,
-                                        start_date ="1981-01-01",
-                                        end_date ="2019-12-31"){
+select_italian_emr_stations <- function(path, shp_path){
   
-  # find the corsica stations within the shapefile
-  emr_stations_id <- select_dataset(shp_path = shp_path,
+  start_date <<- start_date
+  end_date <<- end_date
+  
+  # find the emr stations within the shapefile
+  emr_stations_ls <- select_dataset(shp_path = shp_path,
                                     dataset_name = "arpae",
                                     col_names = "name")
   
+  emr_stations_id = emr_stations_ls[[1]]
+  emr_stations_gauge_d = emr_stations_ls[[2]]
+  
   emr_stations_id <- emr_stations_id[! emr_stations_id %in% "emr:Salsominore"]
   emr_stations_id <- c(emr_stations_id, "emr:Salsominiore")
+  
   out <- lapply(seq_along(path), function(i){
-    #extract emr unique ID by formatting path
-    gaugeno <- gsub(".csv", "", basename(path[i]))
-    # gaugeno <- strsplit(basename(path[i]), '[.]')[[1]][1]
     
-    gaugeid <- gaugeno %>% gsub("emr_", "emr:", .) %>% 
+    gaugeno <- gsub(".csv", "", basename(path[i])) %>%
+      gsub("emr_", "emr:", .) %>% 
       gsub("_", " ", .)
+    
+    index = which(emr_stations_id == gaugeno)
+    gaugeid <- emr_stations_gauge_d[index]
     
     m <- fread(path[i], header = T, skip = 14) %>% .[,-2] %>% 
       rename(dates = "Inizio validità (UTC)")  %>% 
@@ -625,10 +675,10 @@ select_italian_emr_stations <- function(path, shp_path,
       as.Date(paste0(format(max(m$dates, na.rm=T), '%Y'),'-12-31')),
       "day"))
     
-    # join the values of station by matching dates
     all_dt <- merge(all_dt, m, by="dates", all.x=T) %>%
-      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),] %>%
-      .[, gaugeid := gaugeid]
+      .[dates >= start_date & dates <= end_date,] %>%
+      .[, gaugeid := gaugeid] %>% 
+      .[!is.na(gaugeid)]
     
     return(all_dt)
   }) %>% 
@@ -645,21 +695,26 @@ select_italian_emr_stations <- function(path, shp_path,
   return(function_output)
 }
 
-select_italian_ispra_stations <- function(path, shp_path,
-                                          start_date ="1981-01-01",
-                                          end_date ="2019-12-31"){
+select_italian_ispra_stations <- function(path, shp_path){
+  
+  start_date <<- start_date
+  end_date <<- end_date
   
   # find the corsica stations within the shapefile
-  ispra_stations_id <- select_dataset(shp_path = shp_path,
+  ispra_stations_ls <- select_dataset(shp_path = shp_path,
                                       dataset_name = "ispra",
                                       col_names = "name")
   
+  ispra_stations_id = ispra_stations_ls[[1]]
+  ispra_stations_gauge_d = ispra_stations_ls[[2]]
+  
   out <- lapply(seq_along(path), function(i){
-    #extract emr unique ID by formatting path
-    gaugeno <- gsub(".csv", "", basename(path[i]))
-    
-    gaugeid <- gaugeno %>%
+    # find the station name from the path
+    gaugeno <- gsub(".csv", "", basename(path[i])) %>%
       gsub("_", ":", .)
+    
+    index = which(ispra_stations_id == gaugeno)
+    gaugeid <- ispra_stations_gauge_d[index]
     
     m <- fread(path[i], header = T, skip = 15) %>% 
       rename(dates = "flowvalue") %>% 
@@ -671,9 +726,8 @@ select_italian_ispra_stations <- function(path, shp_path,
       as.Date(paste0(format(max(m$dates, na.rm=T), '%Y'),'-12-31')),
       "day"))
     
-    # join the values of station by matching dates
     all_dt <- merge(all_dt, m, by="dates", all.x=T) %>%
-      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),] %>%
+      .[dates >= start_date & dates <= end_date,] %>%
       .[, gaugeid := gaugeid]
     
     return(all_dt)
@@ -681,7 +735,8 @@ select_italian_ispra_stations <- function(path, shp_path,
     rbindlist
   
   # find the stations with records for at least 36 months
-  station_less36_mon <- select_min_fullmonths(out, min_months = 36)
+  station_less36_mon <- select_min_fullmonths(out, min_months = 36) %>% 
+    .[gaugeid %in% ispra_stations_gauge_d,]
   
   function_output <- list(
     output_ts = station_less36_mon,
@@ -691,26 +746,30 @@ select_italian_ispra_stations <- function(path, shp_path,
   return(function_output)
 }
 
-select_italian_arpal_stations <- function(path, shp_path,
-                                          start_date ="1981-01-01",
-                                          end_date ="2019-12-31"){
+select_italian_arpal_stations <- function(path, shp_path){
   
-  # find the corsica stations within the shapefile
-  arpal_stations_id <- select_dataset(shp_path = shp_path,
+  start_date <<- start_date
+  end_date <<- end_date
+  
+  # find the arpal stations within the shapefile
+  arpal_stations_ls <- select_dataset(shp_path = shp_path,
                                       dataset_name = "arpal",
                                       col_names = "name")
+  arpal_stations_id = arpal_stations_ls[[1]]
+  arpal_stations_gauge_d = arpal_stations_ls[[2]]
   
   out <- lapply(seq_along(path), function(i){
     #extract emr unique ID by formatting path
     gaugeno <- gsub(".csv", "", basename(path[i]))
     
-    gaugeid <- gaugeno
-    
+    index = which(arpal_stations_id == gaugeno)
+    gaugeid <- arpal_stations_gauge_d[index]
+
     m <- fread(path[i], header = TRUE) %>% .[, -1] %>% 
       mutate(date = as.Date(date, format = "%Y_%m_%d"),
              Q = suppressWarnings(as.numeric(Q))) %>% 
-      rename( dates = "date") %>% 
-      setnames("Q", 'value')
+      setnames(c("date", "Q"),
+               c("dates", 'value'))
     
     # join the values of station by matching dates
     all_dt <- data.table(dates = seq.Date(
@@ -720,8 +779,9 @@ select_italian_arpal_stations <- function(path, shp_path,
     
     # join the values of station by matching dates
     all_dt <- merge(all_dt, m, by="dates", all.x=T) %>%
-      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),] %>%
-      .[, gaugeid := gaugeid]
+      .[dates >= start_date & dates <= end_date,] %>%
+      .[, gaugeid := gaugeid] %>% 
+      .[!is.na(gaugeid)]
     
     return(all_dt)
   }) %>% 
@@ -738,24 +798,32 @@ select_italian_arpal_stations <- function(path, shp_path,
   return(function_output)
 }
 
-select_italian_arpas_stations <- function(path, shp_path,
-                                          start_date ="1981-01-01",
-                                          end_date ="2019-12-31"){
+select_italian_arpas_stations <- function(path, shp_path){
   
-  all_dt <- data.table(dates = seq.Date(as.Date("1901-01-01"),
-                                        as.Date("2022-12-31"),
-                                        "day"))
+  # call the start and end date of the period 
+  start_date <<- start_date
+  end_date <<- end_date
+  # all_dt <- data.table(dates = seq.Date(as.Date("1901-01-01"),
+  #                                       as.Date("2022-12-31"),
+  #                                       "day"))
   
-  # find the corsica stations within the shapefile
-  arpas_stations_id <- select_dataset(shp_path = shp_path,
+  # find the arpas stations within the shapefile
+  arpas_stations_ls <- select_dataset(shp_path = shp_path,
                                       dataset_name = "arpas",
                                       col_names = "name")
   
+  arpas_stations_id = arpas_stations_ls[[1]]
+  arpas_stations_gauge_d = arpas_stations_ls[[2]]
+  
   out <- lapply(seq_along(path), function(i){
-    #extract emr unique ID by formatting path
-    gaugeid <- gsub(".csv", "", basename(path[i])) %>%
+    
+    # find the station name from the path
+    gaugeno <- gsub(".csv", "", basename(path[i])) %>%
       gsub("_",".", .) %>% 
       paste0("sar:", .)
+    
+    index = which(arpas_stations_id == gaugeno)
+    gaugeid <- arpas_stations_gauge_d[index]
     
     m <- fread(path[i], header = TRUE, skip = 3) %>% 
       dplyr::select(one_of(c("date", "Q"))) %>% 
@@ -772,8 +840,9 @@ select_italian_arpas_stations <- function(path, shp_path,
     
     # join the values of station by matching dates
     all_dt <- merge(all_dt, m, by="dates", all.x=T) %>%
-      .[dates >= as.Date(start_date) & dates <= as.Date(end_date),] %>%
-      .[, gaugeid := gaugeid]
+      .[dates >= start_date & dates <= end_date,] %>%
+      .[, gaugeid := gaugeid] %>% 
+      .[!is.na(gaugeid)]
     
     return(all_dt)
   }) %>% 
@@ -818,4 +887,31 @@ remove_records <- function(in_daily_paths) {
     setnames(c('gaugeid', 'flag', 'comment'))
 }
 
-
+split_file_random = function(source_path, set1_path, set2_path, overlap_percentage = 0.1){
+  
+  # Get the files in the source path
+  files_list = list.files(path = source_path, 
+                          pattern = "*.png",
+                          full.names = TRUE)
+  
+  # Set a seed for reproducibility
+  set.seed(2023)
+  overlap_size = round(length(files_list) * overlap_percentage)
+  
+  # Assign files randomly to two sets
+  ovelap_indices = sample(length(files_list), size = overlap_size)
+  sets_indices = sample(length(files_list), size = length(files_list)/2)
+  
+  # Get the files and unique them
+  set1_files = files_list[unique(c(sets_indices, ovelap_indices))]
+  set2_files =  files_list[-sets_indices]
+  set2_files_ovelap = files_list[ovelap_indices]
+  
+  # Unique the paths
+  set2_files_unique = unique(c(set2_files, set2_files_ovelap))
+  
+  # Copy files to the subfolders
+  file.copy(set1_files, set1_path)
+  file.copy(set2_files_unique, set2_path)
+  
+}
