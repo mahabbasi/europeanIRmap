@@ -7,8 +7,9 @@ tar_source("src/used_libraries.R")
 
 # define the data path 
 rootpath = here::here()
-datapath = file.path(rootpath, "Data/targets")
-shp_path = file.path(rootpath, "Data/shp/eu_stations/european_gaugestations.shp")
+datapath = file.path(rootpath, "Data")
+shp_path = file.path(rootpath, "Data/shp/eu_stations/european_gaugingstations.shp")
+
 
 resultspath = file.path(rootpath, "results")
 check_plot_path = file.path(resultspath, 'ts_plots')
@@ -23,6 +24,12 @@ lapply(list(resultspath, check_plot_path, preprocessed_path,
   }
 })
 
+# Pathes used when the large rasters are available in the workflow 
+watergap_raster_HR_path = file.path("/home/home1/gm/projects/DRYvER/03_data/13_predictors", 
+                                    "Downscaled_WaterGAP_raster")
+
+path_LR = "/home/home1/gm/projects/DRYvER/03_data/14_Mathis_data/LRpredictors"
+
 # define start and end dates
 start_date = as.Date("1981-01-01")
 end_date = as.Date("2019-12-31")
@@ -30,47 +37,47 @@ end_date = as.Date("2019-12-31")
 plan_preprocess = tar_plan(
   tar_target(
     name = 'spanish_rawfiles',
-    download_spanish_stations(file.path(rootpath, "Data", "Spain_SAIH"))
+    download_spanish_stations(file.path(rootpath, "Data/targets/raw", "Spain_SAIH"))
   ),
   
   tar_target(
     name = "input_files",
     command = list(
       list.files(
-        path = file.path(datapath, "raw/2023-04-20_08-00_Europe1"),
+        path = file.path(datapath, "targets/raw/2023-04-20_08-00_Europe1"),
         pattern = "txt",
         full.names = TRUE
       ),
       list.files(
-        path = file.path(datapath, "raw/corsica"),
+        path = file.path(datapath, "targets/raw/corsica"),
         pattern = "csv",
         full.names = TRUE
       ),
       file.path(datapath,
-                "raw/harmonized_dataset_cleaned_new.csv"
+                "targets/raw/harmonized_dataset_cleaned_new.csv"
                 ),
       list.files(
-        path = file.path(datapath, "raw/Smires/uuid"),
+        path = file.path(datapath, "targets/raw/Smires/uuid"),
         pattern = "csv",
         full.names = TRUE
         ),
       list.files(
-        path = file.path(datapath, "raw/Data_IT/emr"),
+        path = file.path(datapath, "targets/raw/Data_IT/emr"),
         pattern = "csv",
         full.names = TRUE
         ),
       list.files(
-        path = file.path(datapath, "raw/Data_IT/ispra"),
+        path = file.path(datapath, "targets/raw/Data_IT/ispra"),
         pattern = "csv",
         full.names = TRUE
         ),
       list.files(
-        path = file.path(datapath, "raw/Data_IT/lom"),
+        path = file.path(datapath, "targets/raw/Data_IT/lom"),
         pattern = "csv",
         full.names = TRUE
         ),
       list.files(
-        path = file.path(datapath, "raw/Data_IT/sar"),
+        path = file.path(datapath, "targets/raw/Data_IT/sar"),
         pattern = "csv",
         full.names = TRUE
         )
@@ -137,7 +144,6 @@ plan_preprocess = tar_plan(
                                       in_metadata =  spanish_rawfiles$metadata
     )
   ),
-  
   # tar_target(
   #       name = "write_files",
   #       command = {
@@ -163,31 +169,253 @@ plan_preprocess = tar_plan(
   #           arpas_stations$output_ts, file = file.path(datapath, "preprocessed/arpas_stations.csv"))
   #       }, format = "file"
   # ),
-  
+  # 
+  # tar_target(
+  #   ts_plots,
+  #   lapply(list(corsica_stations$output_ts,
+  #               grdc_stations$output_dt,
+  #               grdc_old_stations$output_dt,
+  #               smires_stations$output_ts,
+  #               emr_stations$output_ts,
+  #               ispra_stations$output_ts,
+  #               arpal_stations$output_ts,
+  #               arpas_stations$output_ts,
+  #               spanish_stations$output_ts,
+  #               gsim_stations$output_ts,
+  #               rbis_stations$output_ts),
+  #   function(in_dt) {
+  #     lapply(unique(in_dt$gaugeid),
+  #            function(id) plot_daily_q_timeseries(in_dt[gaugeid == id,],
+  #                                                 outdir=check_plot_path))
+  #   }
+  #   )
+  # ),
+  # tar_target(
+  #   name = 'split_plots',
+  #   command = split_file_random(source_path = check_plot_path,
+  #                               set1_path = check_plot_set1,
+  #                               set2_path = check_plot_set2)
+  # )
   tar_target(
-    ts_plots,
-    lapply(list(corsica_stations$output_ts,
-                grdc_stations$output_dt,
-                grdc_old_stations,
-                smires_stations$output_ts,
-                emr_stations$output_ts,
-                ispra_stations$output_ts,
-                arpal_stations$output_ts,
-                arpas_stations$output_ts,
-                spanish_stations$output_ts,
-                gsim_stations$output_ts,
-                rbis_stations$output_ts),
-    function(in_dt) {
-      lapply(unique(in_dt$gaugeid),
-             function(id) plot_daily_q_timeseries(in_dt[gaugeid == id,],
-                                                  outdir=check_plot_path))
+    name = final_targets,
+    command = {
+      list(corsica_stations$output_ts,
+           grdc_stations$output_dt,
+           grdc_old_stations$output_ts,
+           smires_stations$output_ts,
+           emr_stations$output_ts,
+           ispra_stations$output_ts,
+           arpal_stations$output_ts,
+           arpas_stations$output_ts,
+           spanish_stations$output_ts,
+           gsim_stations$output_ts,
+           rbis_stations$output_ts) %>% 
+        remove_records(.)
     }
+  ),
+  tar_target(
+    name = "final_gauges",
+    command = final_gauge_shp(shp_path,
+                              gaugeids_removed = final_targets$gaugeids_removed)
+  )
+)
+
+# ----------------------- pre-processing: computing the predictors -----------------
+plan_compute_predictors = tar_plan(
+  
+  # extract the HR, LR, and static predictors from large files that cannot be stores
+  # in clouds, so we decided to comment this section in the workflow. on the other hand,
+  # the predictors for the stations are stored in csv format.
+  
+  # tar_target(
+  #   name = "watergap_hr_ts",
+  #   command = extract_HR_streamflow(path = watergap_raster_HR_path,
+  #                                   gauges_shp = final_gauges,
+  #                                   out_dir = file.path(datapath, "predictors/HR"))
+  # ),
+  # tar_target(
+  #   name = "extract_qrdif_ql_ratio",
+  #   command = extract_LR_predictors(path = file.path(path_LR, "qrdif_ql_ratio_mon_raster"),
+  #                                   gauges_shp = final_gauges,
+  #                                   variable_name = "qrdif_ql_ratio",
+  #                                   out_dir = file.path(datapath, "predictors/LR"))
+  # ),
+  # tar_target(
+  #   name = "extract_wetdays",
+  #   command = extract_LR_predictors(path = file.path(path_LR, "Prec_wetdays_raster"),
+  #                                   gauges_shp = final_gauges,
+  #                                   variable_name = "wetdays",
+  #                                   out_dir = file.path(datapath, "predictors/LR"))
+  # ),
+  tar_target(
+    name = "hr_predictors",
+    command = compute_highres_predictors(
+      watergap_raw_path = file.path(datapath, "predictors/HR",
+                                    "waterGAP_streamflow_stations.csv"))
+  ),
+  tar_target(
+    name = 'static_predictors',
+    command = compute_static_predictors(
+      in_dt_path = file.path(datapath, "eu_nets", "attri_table_eu_nets.csv"),
+      gauge_shp = final_gauges
     )
   ),
   tar_target(
-    name = 'split_plots',
-    command = split_file_random(source_path = check_plot_path,
-                                set1_path = check_plot_set1,
-                                set2_path = check_plot_set2)
+    name = "model_data",
+    command = combined_predictors(in_target = final_targets$output_ts,
+                                  in_hr_pred = hr_predictors,
+                                  path_lr_pred = file.path(datapath, "predictors/LR"),
+                                  in_static_pred = static_predictors)
   )
+)
+
+# ------------------------- Modeling development- step ONE --------------------------
+
+
+plan_model_stepone = tar_plan(
+  # tar_target(
+  #   name = "n",
+  #   command = {
+  #     n = sample(1:nrow(model_data), 1000)
+  #   }
+  # ),
+  tar_target(
+    name = "in_task",
+    command = create_task_stepone(in_tbl = model_data[,-c(1, 2)])
+  ),
+  tar_target(
+    name = "measures",
+    command = list(classif = msr("classif.bacc"),
+                   regr = msr("regr.mae"))
+  ),
+  tar_target(
+    name = "baselearners",
+    command = create_baselearners(in_task = in_task, ncores = 17)
+  ),
+  tar_target(
+    name = "seplearners",
+    command = tar_read(baselearners),
+    iteration = "list"
+  ),
+  tar_target(
+    name = "autotuning",
+    command = set_tuning(in_learner = seplearners,
+               in_measure = measures,
+               nfeatures = length(in_task$feature_names),
+               insamp_nfolds = 3, insamp_neval = 40,
+               insamp_nbatch = parallel::detectCores(logical = FALSE) - 3),
+    pattern = map(seplearners)
+  ),
+  tar_target(
+    name = "resamplingset",
+    command = set_cvresampling(rsmp_id = "repeated_cv",
+                               in_task = in_task,
+                               outsamp_nrep = 2,
+                               outsamp_nfolds = 3)
+  ),
+  tar_target(
+    name = "rfresampled_classif",
+    command = dynamic_resample(in_task = in_task,
+                               in_learner = autotuning,
+                               in_resampling = resamplingset,
+                               store_models = TRUE,
+                               type = "classif"),
+    pattern = map(autotuning),
+    iteration = "list"
+    
+  ),
+  tar_target(
+    name = "rfbm_classif",
+    command = combine_bm(in_resampleresults = rfresampled_classif,
+                         write_qs = T,
+                         inp_resdir = file.path(resultspath, "store_premodels_stepone"))
+  ),
+  tar_target(
+    name = "selected_learner",
+    command = "oversampled.classif.ranger"
+  ),
+  tar_target(
+    name = "tasks_featsel",
+    command = select_features(
+      in_bm = rfbm_classif,
+      in_lrnid =  selected_learner,
+      in_task = in_task,
+      pcutoff = 0.05,
+      inp_resdir = file.path(resultspath, "store_premodels_stepone")
+    )
+  ),
+  tar_map(
+    values = tibble(in_strategy = c('repeated_cv', "repeated_spcv_coords"),
+                    in_outrep = c(2, 1),
+                    in_outfolds = c(3, 10),
+                    names = c('cv', 'spcv')),
+    names =  names,
+    tar_target(
+      name = "featsel",
+      command = set_cvresampling(rsmp_id = in_strategy,
+                                 in_task = in_task,
+                                 outsamp_nrep = in_outrep,
+                                 outsamp_nfolds = in_outfolds)
+  ),
+  unlist = FALSE 
+  ),
+  tar_target(
+    name = "res_featsel_cv",
+    command = dynamic_resamplebm(in_task = tasks_featsel[[2]],
+                                 in_bm = rfbm_classif,
+                                 in_lrnid =  selected_learner,
+                                 in_resampling = featsel_cv,
+                                 store_models = TRUE,
+                                 inp_resdir = file.path(resultspath, "store_premodels_stepone"),
+                                 type = 'classif')
+  ),
+  tar_target(
+    name = "res_featsel_spcv",
+    command = dynamic_resamplebm(in_task = tasks_featsel[[2]],
+                                 in_bm = rfbm_classif,
+                                 in_lrnid =  selected_learner,
+                                 in_resampling = featsel_spcv,
+                                 store_models =  TRUE,
+                                 inp_resdir = file.path(resultspath, "store_premodels_stepone"),
+                                 type = 'classif')
+  ),
+  tar_target(
+    name = "rfeval_featsel",
+    c(res_featsel_cv, res_featsel_spcv)
+  ),
+  tar_target(
+    name = "rfbm_featsel",
+    command = analyze_benchmark(in_bm = rfeval_featsel,
+                                in_measure = measures)
+  ),
+  tar_target(
+    name = "rftuned",
+    command = selecttrain_rf(in_rf = res_featsel_cv,
+                             in_learnerid = selected_learner,
+                             in_task = "binary_class")
+  ),
+  tar_target(
+    name = predvars,
+    command = predname_df(in_task = rftuned$task)
+  ),
+  tar_target(
+    name = 'vimp_plot',
+    command = ggvimp(in_rftuned = rftuned, in_predvars = predvars,
+                     varnum=22, spatial_rsp = FALSE)
+  ),
+   tar_target(
+     name = "pd_plot",
+     command = ggpartialdep(in_rftuned=rftuned,
+                            in_predvars=predvars,
+                            colnums=1:27, nvariate=1, nodupli = FALSE,
+                            grid_resolution = 20, parallel = FALSE, spatial_rsp = FALSE)
+   )
+)
+
+
+# ------------------ Pipeline of the workflow's plans -------------
+list(
+  plan_preprocess,
+  plan_compute_predictors,
+  plan_model_stepone
 )
