@@ -13,7 +13,7 @@ suppressPackageStartupMessages(library(rprojroot))
 suppressPackageStartupMessages(library(ranger))
 
 suppressPackageStartupMessages(library(ggplot2))
-#suppressPackageStartupMessages(library(edarf)) find alternative
+suppressPackageStartupMessages(library(pdp))
 suppressPackageStartupMessages(library(gridExtra))
 suppressPackageStartupMessages(library(qs))
 suppressPackageStartupMessages(library(data.table))
@@ -22,5 +22,5 @@ suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(ie2misc))
 suppressPackageStartupMessages(library(themis))
 suppressPackageStartupMessages(library(tidymodels))
-
-
+suppressPackageStartupMessages(library(raster))
+suppressPackageStartupMessages(library(gtools))
