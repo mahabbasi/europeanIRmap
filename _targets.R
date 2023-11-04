@@ -276,7 +276,7 @@ plan_model_stepone = tar_plan(
   # tar_target(
   #   name = "n",
   #   command = {
-  #     n = sample(1:nrow(model_data), 1000)
+  #     n = sample(1:nrow(model_data), 40000)
   #   }
   # ),
   tar_target(
@@ -290,7 +290,7 @@ plan_model_stepone = tar_plan(
   ),
   tar_target(
     name = "baselearners",
-    command = create_baselearners(in_task = in_task, ncores = 17)
+    command = create_baselearners(in_task = in_task, ncores = 18)
   ),
   tar_target(
     name = "seplearners",
@@ -302,8 +302,8 @@ plan_model_stepone = tar_plan(
     command = set_tuning(in_learner = seplearners,
                in_measure = measures,
                nfeatures = length(in_task$feature_names),
-               insamp_nfolds = 3, insamp_neval = 40,
-               insamp_nbatch = parallel::detectCores(logical = FALSE) - 3),
+               insamp_nfolds = 3, insamp_neval = 15,
+               insamp_nbatch = parallel::detectCores(logical = FALSE) - 4),
     pattern = map(seplearners)
   ),
   tar_target(
@@ -322,7 +322,7 @@ plan_model_stepone = tar_plan(
                                type = "classif"),
     pattern = map(autotuning),
     iteration = "list"
-    
+
   ),
   tar_target(
     name = "rfbm_classif",
@@ -357,7 +357,7 @@ plan_model_stepone = tar_plan(
                                  outsamp_nrep = in_outrep,
                                  outsamp_nfolds = in_outfolds)
   ),
-  unlist = FALSE 
+  unlist = FALSE
   ),
   tar_target(
     name = "res_featsel_cv",
@@ -412,10 +412,157 @@ plan_model_stepone = tar_plan(
    )
 )
 
+# ------------------ Modeling step2 with 4 categories test --------------
+plan_model_step2_fourclasses = tar_plan(
+  tar_target(
+    name = "in_task_step2_fourclass",
+    command = create_task_steptwo_test(in_tbl = model_data,
+                                       breaks = c(-Inf, 5,15, 29, 32),
+                                       labels = c("1", "2", "3", "4"))
+  ),
+  tar_target(
+    name = "measures",
+    command = list(classif = msr("classif.bacc"),
+                   regr = msr("regr.mae"))
+  ),
+  tar_target(
+    name = "baselearners_step2_fourclass",
+    command = create_baselearners_steptwo(in_task = in_task_step2_fourclass,
+                                                ncores = 18)
+  ),
+  tar_target(
+    name = "seplearners_step2_fourclass",
+    command = tar_read(baselearners_step2_fourclass),
+    iteration = "list"
+  ),
+  tar_target(
+    name = "autotuning_step2_fourclass",
+    command = set_tuning(in_learner = seplearners_step2_fourclass,
+                         in_measure = measures,
+                         nfeatures = length(in_task_step2_fourclass$feature_names),
+                         insamp_nfolds = 3, insamp_neval = 55,
+                         insamp_nbatch = parallel::detectCores(logical = FALSE) - 1),
+    pattern = map(seplearners_step2_fourclass)
+  ),
+  tar_target(
+    name = "resamplingset_step2_fourclass",
+    command = set_cvresampling_step2(rsmp_id = "repeated_cv",
+                                     in_task = in_task_step2_fourclass,
+                                     outsamp_nrep = 2,
+                                     outsamp_nfolds = 3)
+  ),
+  tar_target(
+    name = "rfresampled_classif_step2_fourclass",
+    command = dynamic_resample(in_task = in_task_step2_fourclass,
+                               in_learner = autotuning_step2_fourclass,
+                               in_resampling = resamplingset_step2_fourclass,
+                               store_models = TRUE,
+                               type = "classif"),
+    pattern = map(autotuning_step2_fourclass),
+    iteration = "list"
+    
+  ),
+  tar_target(
+    name = "rfbm_classif_step2_fourclass",
+    command = combine_bm(in_resampleresults = rfresampled_classif_step2_fourclass,
+                         write_qs = T,
+                         inp_resdir = file.path(resultspath, "store_premodels_steptwo"))
+  ),
+  tar_target(
+    name = "selected_learner_step2_fourclass",
+    command = "oversample_major.classif.ranger"
+  ),
+  tar_target(
+    name = "tasks_featsel_step2_fourclass",
+    command = select_features(
+      in_bm = rfbm_classif_step2_fourclass,
+      in_lrnid =  selected_learner_step2_fourclass,
+      in_task = in_task_step2_fourclass,
+      pcutoff = 0.05,
+      inp_resdir = file.path(resultspath, "store_premodels_steptwo")
+    )
+  ),
+  tar_map(
+    values = tibble(in_strategy_step2 = c('repeated_cv', "repeated_spcv_coords"),
+                    in_outrep_step2 = c(2, 1),
+                    in_outfolds_step2 = c(3, 10),
+                    names = c('cv', 'spcv')),
+    names =  names,
+    tar_target(
+      name = "featsel_step2_fourclass",
+      command = set_cvresampling(rsmp_id = in_strategy_step2,
+                                 in_task = in_task_step2_fourclass,
+                                 outsamp_nrep = in_outrep_step2,
+                                 outsamp_nfolds = in_outfolds_step2)
+    ),
+    unlist = FALSE
+  ),
+  # tar_target(
+  #   name = "res_featsel_cv_step2_fourclass",
+  #   command = dynamic_resamplebm(in_task = tasks_featsel_step2_fourclass,
+  #                                in_bm = rfbm_classif_step2_fourclass,
+  #                                in_lrnid =  selected_learner_step2_fourclass,
+  #                                in_resampling = featsel_step2_fourclass_cv,
+  #                                store_models = TRUE,
+  #                                inp_resdir = file.path(resultspath, "store_premodels_stepone"),
+  #                                type = 'classif')
+  # 
+  # )
+  # tar_target(
+  #   name = "res_featsel_spcv_step2_fourclass",
+  #   command = dynamic_resamplebm_step2(in_task = tasks_featsel_step2_fourclass[[2]],
+  #                                      in_bm = rfbm_classif_step2_fourclass,
+  #                                      in_lrnid =  'classif.ranger',
+  #                                      in_taskid = selected_method_step2_fourclass,
+  #                                      in_resampling = featsel_step2_fourclass_spcv,
+  #                                      store_models =  TRUE,
+  #                                      inp_resdir = file.path(resultspath, "store_premodels_steptwo"),
+  #                                      type = 'classif')
+  # ),
+  # tar_target(
+  #   name = "rfeval_featsel_step2_fourclass",
+  #   c(res_featsel_cv_step2_fourclass, res_featsel_spcv_step2_fourclass)
+  # ),
+  # # tar_target(
+  # #   name = "rfbm_featsel_step2_fourclass",
+  # #   command = analyze_benchmark(in_bm = rfeval_featsel_step2_fourclass,
+  # #                               in_measure = measures)
+  # # ),
+  tar_target(
+    name = "rftuned_step2_fourclass",
+    command = selecttrain_rf(in_rf = rfresampled_classif_step2_fourclass[[2]],
+                             in_learnerid = 'classif.ranger',
+                             in_task = "multi_class")
+  ),
+  tar_target(
+    name = predvars_step2_fourclass,
+    command = predname_df(in_task = rftuned_step2_fourclass$task,
+                          in_task_all = in_task_step2_fourclass)
+  ),
+  tar_target(
+    name = 'vimp_plot_step2_fourclass',
+    command = ggvimp(in_rftuned = rftuned_step2_fourclass,
+                     in_predvars = predvars_step2_fourclass,
+                     varnum=23, spatial_rsp = FALSE)
+  )
+  # tar_target(
+  #   name = "pd_plot_Step2_fourclass",
+  #   command = ggpartialdep(in_rftuned=rftuned_step2_fourclass,
+  #                          in_predvars=predvars_step2_fourclass,
+  #                          colnums=1:27, nvariate=1, nodupli = FALSE,
+  #                          ngrid = 20, parallel = FALSE, spatial_rsp = FALSE)
+  # )
+)
+
+# ------------------ Plan for producing Figures -------------------
+paln_figures = tar_plan(
+  
+) 
 
 # ------------------ Pipeline of the workflow's plans -------------
 list(
   plan_preprocess,
   plan_compute_predictors,
-  plan_model_stepone
+  plan_model_stepone,
+  plan_model_step2_fourclasses
 )
