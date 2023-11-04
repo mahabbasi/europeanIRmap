@@ -2,23 +2,29 @@ library(targets)
 library(tarchetypes)
 tar_option_set(packages = c("sf", "data.table", "tidyverse", "here"),
                memory = "transient", garbage_collection = TRUE, format = "qs")
-tar_source("src/pre_processing_functions.R")
+
 tar_source("src/used_libraries.R")
+tar_source("src/pre_processing_functions.R")
+tar_source("src/modeling_functions.R")
+tar_source("src/producing_figures.R")
+
 
 # define the data path 
 rootpath = here::here()
 datapath = file.path(rootpath, "Data")
 shp_path = file.path(rootpath, "Data/shp/eu_stations/european_gaugingstations.shp")
-
-
 resultspath = file.path(rootpath, "results")
 check_plot_path = file.path(resultspath, 'ts_plots')
 preprocessed_path = file.path(resultspath, "preprocessed")
 check_plot_set1 = file.path(resultspath, 'ts_plots/set1')
 check_plot_set2 = file.path(resultspath, 'ts_plots/set2')
+shapefiles_path = file.path(resultspath, 'shapefiles')
+model_path = file.path(resultspath, 'modeldir')
+reachoutput_path = file.path(resultspath, 'reach_output')
 
 lapply(list(resultspath, check_plot_path, preprocessed_path,
-            check_plot_set1, check_plot_set2), function(path) {
+            check_plot_set1, check_plot_set2, shapefiles_path, model_path,
+            reachoutput_path), function(path) {
   if (!dir.exists(path)) {
     dir.create(path, recursive = TRUE)
   }
@@ -29,7 +35,7 @@ watergap_raster_HR_path = file.path("/home/home1/gm/projects/DRYvER/03_data/13_p
                                     "Downscaled_WaterGAP_raster")
 
 path_LR = "/home/home1/gm/projects/DRYvER/03_data/14_Mathis_data/LRpredictors"
-
+reachesdatpath = '/home/home1/gm/projects/DRYvER/04_code/04_statistical_modeling/Apply_nets_eu/data'
 # define start and end dates
 start_date = as.Date("1981-01-01")
 end_date = as.Date("2019-12-31")
@@ -554,9 +560,78 @@ plan_model_step2_fourclasses = tar_plan(
   # )
 )
 
+# ------------------ Plan for applying models to European reaches ----------
+plan_applyingmodels = tar_plan(
+  tar_target(
+    name = 'eu_reaches_status_dt',
+    command = runmodels_over_period(path_model1 = file.path(model_path, "rftuned_step1.qs"),
+                                    path_model2 = file.path(model_path, "rftuned_step2.qs"),
+                                    path_static = file.path(reachesdatpath, "Statics", "static_preds_net_eu.fst"),
+                                    path_LR = file.path(reachesdatpath, "LR"),
+                                    path_HR = file.path(reachesdatpath, "HR"),
+                                    outdir = reachoutput_path)
+  )
+)
 # ------------------ Plan for producing Figures -------------------
-paln_figures = tar_plan(
-  
+plan_figures = tar_plan(
+  tar_target(
+    name = 'validate_DS_nselognse', # the format is geospatial and used to create Figure 2 as well
+    command = compute_logNSE_NSE_dswatergap(observed_streamflow = final_targets$output_ts,
+                                            ds_watergap = hr_predictors,
+                                            shp = final_gauges)
+  ),
+  tar_target(
+    name = 'save_validation_figure2',
+    command = {
+      tar_read(validate_DS_nselognse) %>%
+        sf::st_write(., dsn = file.path('results/shapefiles', 'logNSE_NSE_obs_vs_DSwatergap.shp'))
+    }
+  ),
+  tar_target(
+    name = 'boxplot_figure3',
+    command = ggboxplot_lognse_fig3(in_data = validate_DS_nselognse)
+  ),
+  tar_target(
+    name = 'boxplot_figure5S',
+    command = ggboxplot_intermittent_figS5(in_nse_data=validate_DS_nselognse,
+                                           in_model_data=model_data)
+  ),
+  tar_target(
+    name = 'boxplot_figure6S',
+    command = ggboxplot_perennial_figS6(in_nse_data=validate_DS_nselognse,
+                                           in_model_data=model_data)
+  ),
+  tar_target(
+    name = 'ratio_intermittency_step1_figure4ab',
+    command = compute_noflow_ratio(in_model=rftuned,
+                                   gauges_shp=final_gauges,
+                                   outdir='results/shapefiles')
+  ),
+  tar_target(
+    name = 'corr_nse_step1_figure4c',
+    command = compute_corr_nse(in_model=rftuned,
+                               gauges_shp=final_gauges,
+                               outdir='results/shapefiles')
+  ),
+  tar_target(
+    name = 'confmat_step2_figure5',
+    command = ggplotConfusionMatrix_fig5(rftuned_step2=rftuned_step2_fourclass,
+                                         model_data=model_data)
+  ),
+  tar_target(
+    name = 'varimp_bothstpes_figure7',
+    command = ggvimp(in_rftuned_step1=rftuned,
+                     in_rftuned_step2=rftuned_step2_fourclass,
+                     in_predvars=predvars)
+  ),
+  tar_target(
+    name = 'partialdepplot_figure6S',
+    command = ggpartialdep(in_rftuned=rftuned,
+                           in_predvars=predvars,
+                           model_data = model_data,
+                           colnums=1:23, nvariate=1, nodupli = FALSE,
+                           ngrid = 40, parallel = FALSE, spatial_rsp = FALSE)
+  )
 ) 
 
 # ------------------ Pipeline of the workflow's plans -------------
@@ -564,5 +639,7 @@ list(
   plan_preprocess,
   plan_compute_predictors,
   plan_model_stepone,
-  plan_model_step2_fourclasses
+  plan_model_step2_fourclasses,
+  plan_applyingmodels,
+  plan_figures
 )
