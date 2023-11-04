@@ -886,3 +886,150 @@ set_cvresampling_step2 <- function(rsmp_id, in_task, outsamp_nrep, outsamp_nfold
   
   return(outer_resampling)
 }
+
+# ----------------------- Functions for applying the sequantial model to reaches -------------
+# costum functions to import data and the tuned models, and lastely execute the sequential models
+import_data <- function(path_static, path_LR,
+                        path_HR, num_mon,
+                        num_year){
+  
+  # Static predictors -----
+  static_pred <- fst::read_fst(path = path_static,
+                               columns = c("glacier_fraction", "land_cover", "slope", "drainage_area",
+                                           "pot_nat_vegetation", "karst_fraction", "karst_status",
+                                           'lka_pc_use', 'ppd_pk_cav', 'ppd_pk_uav', 'ire_pc_cse', 
+                                           'ire_pc_use', 'dor_pc_pva',
+                                           paste0("ai_", num_mon))) %>%
+    as.data.table() %>% 
+    rename(., ai = paste0("ai_", num_mon))
+  
+  upa <- static_pred %>% pull(drainage_area)
+  
+  # Low resolution predictors ----
+  path_qrdif_ql_ratio <-  file.path(path_LR, "gwr_to_runoff_ratio_eu.fst")
+  path_wetdays <-  file.path(path_LR, "wetdays_net_eu.fst") 
+  
+  qrdif_ql_ratio <- fst::read_fst(path = path_qrdif_ql_ratio,
+                                  columns = paste0("gwr_", num_mon, "_", num_year)) %>%
+    as.data.table() %>% 
+    replace(is.na(.), 0) %>% 
+    `colnames<-`("gwr_to_runoff_ratio")
+  
+  wet_day <- fst::read_fst(path = path_wetdays,
+                           columns = paste0("wetdays_", num_mon, "_", num_year)) %>%
+    as.data.table() %>% 
+    `colnames<-`("wet_days")
+  # High resolution predictors ------
+  path_Q <- file.path(path_HR, "watergap_dis_net_eu.fst")
+  path_mean_p3 <-  file.path(path_HR, "q_mean_p3_eu.fst")
+  path_mean_p12 <-  file.path(path_HR, "q_mean_p12_eu.fst")
+  path_min_p3 <-  file.path(path_HR, "q_min_p3_eu.fst")
+  path_min_p12 <-  file.path(path_HR, "q_min_p12_eu.fst")
+  path_cv <-  file.path(path_HR, "q_iav_cv_eu.fst")
+  path_sd <-  file.path(path_HR, "q_iav_sd_eu.fst")  
+  Q <- fst::read_fst(path = path_Q,
+                     columns = paste0("Q_", num_mon, "_", num_year)) %>%
+    as.data.table() %>% 
+    `colnames<-`("Q")
+  Q <- Q/upa
+  mean_p3m <- fst::read_fst(path = path_mean_p3,
+                            columns = paste0("mean_p3_", num_mon, "_", num_year)) %>% 
+    as.data.table() %>% 
+    `colnames<-`("mean_p3m")
+  mean_p3m <- mean_p3m/upa
+  mean_p12m <- fst::read_fst(path = path_mean_p12,
+                             columns = paste0("mean_p12_", num_mon, "_", num_year)) %>% 
+    as.data.table() %>% 
+    `colnames<-`("mean_p12m")
+  mean_p12m <- mean_p12m/upa
+  min_p3m <- fst::read_fst(path = path_min_p3,
+                           columns = paste0("min_p3_", num_mon, "_", num_year)) %>% 
+    as.data.table() %>% 
+    `colnames<-`("min_p3m")
+  min_p3m <- min_p3m/upa
+  min_p12m <- fst::read_fst(path = path_min_p12,
+                            columns = paste0("min_p12_", num_mon, "_", num_year)) %>% 
+    as.data.table() %>% 
+    `colnames<-`("min_p12m")
+  min_p12m <- min_p12m/upa
+  q_cv <- fst::read_fst(path = path_cv,
+                        columns = paste0("cv_", num_mon)) %>% 
+    as.data.table() %>% 
+    `colnames<-`("cv") %>% 
+    replace(is.na(.), 5)
+  q_sd <- fst::read_fst(path = path_sd,
+                        columns = paste0("sd_", num_mon, "_", num_year)) %>% 
+    as.data.table() %>% 
+    `colnames<-`("sd")
+  outdt <- cbind(Q, mean_p3m, mean_p12m, min_p3m, min_p12m, q_sd, q_cv,
+                 wet_day, qrdif_ql_ratio, static_pred)
+}
+
+load_models <- function(path_model1, path_model2){
+  
+  model_step1 <- qs::qread(file = path_model1)
+  model_step2 <- qs::qread(file = path_model2)
+  out <- list(model_step1 = model_step1,
+              model_step2 = model_step2)
+}
+execute_models_nets <- function(model_step1, model_step2,
+                                data_dt, threshold = 0.5){
+  
+  res_step1 <- model_step1$predict_newdata(data_dt)
+  res_step1 <- res_step1$set_threshold(threshold) %>% 
+    as.data.table()
+  rows_id_step2 <- res_step1[response != 0, row_ids]
+  
+  res_step2 <- model_step2$predict_newdata(data_dt %>% 
+                                             slice(rows_id_step2)) %>% 
+    as.data.table()
+  out <- list(res_step1 = res_step1,
+              res_step2 = res_step2,
+              rows_id_step2 = rows_id_step2)
+  return(out)
+}
+
+runmodels_over_period <- function(path_model1,path_model2,path_static,path_LR,path_HR,
+                                  start_year=1981, end_year=2019, outdir){
+  seq_models <- load_models(path_model1 = path_model1,
+                            path_model2 = path_model2)
+  
+  # load the DRYvER_id of the reaches over Europe
+  id <- fst::read_fst(path = path_static,
+                      columns = "DRYVER_RIVID") %>% 
+    as.data.table()
+  
+  # create an empty matrix
+  years <- start_year:end_year
+  res_nets_mat <- matrix(NA, nrow = dim(id)[1], ncol = (length(years)*12+1))
+  res_nets_mat[,1] <- id$DRYVER_RIVID
+  
+  # run sequential model for the whole historical period
+  for(i in seq_along(years)){
+    cat("The number of no-flow days for reaches in", as.character(years[i]),
+        "is undergoing.\n")
+    for(j in 1:12){
+      
+      data_dt <- import_data(path_static = path_static,
+                             path_LR = path_LR,
+                             path_HR = path_HR,
+                             num_mon = j,
+                             num_year = years[i])
+      
+      results_net <- execute_models_nets(model_step1 = seq_models$model_step1,
+                                         model_step2 = seq_models$model_step2,
+                                         data_dt = data_dt)
+      res_nets_mat[,((i-1)*12+j+1)] <- 
+        as.numeric(levels(results_net$res_step1$response))[results_net$res_step1$response]
+      res_nets_mat[results_net$rows_id_step2, ((i-1)*12+j+1)] <- 
+        as.numeric(levels(results_net$res_step2$response))[results_net$res_step2$response]
+    }
+    
+  }
+  
+  res_nets_mat_dt <- res_nets_mat %>% as.data.table()
+  fst::write_fst(res_nets_mat_dt, 
+                 path = file.path(outdir,"res_nets_mat_dt.fst"))
+  
+  return(res_nets_mat_dt)
+}
