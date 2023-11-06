@@ -886,6 +886,16 @@ set_cvresampling_step2 <- function(rsmp_id, in_task, outsamp_nrep, outsamp_nfold
   return(outer_resampling)
 }
 
+# save models 
+save_model <- function(in_model, outdir){
+  
+  if (inherits(in_model, 'list')){
+    main_model <- in_model$rf_inner$model$learner$model$classif.ranger$model
+  }
+  
+  qs::qsave(., file = file.path(here::here(), outdir))
+}
+
 # ----------------------- Functions for applying the sequantial model to reaches -------------
 # costum functions to import data and the tuned models, and lastely execute the sequential models
 import_data <- function(path_static, path_LR,
