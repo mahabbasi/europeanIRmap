@@ -770,7 +770,6 @@ selecttrain_rf <- function(in_rf, in_learnerid=NULL, in_task = NULL,
 }
 
 # ----------------Functions for step 2 RF ------------
-
 create_task_steptwo <- function(in_tbl, breaks, labels){
   colnames(in_tbl) <- make.names(names(in_tbl),
                                  unique = TRUE)

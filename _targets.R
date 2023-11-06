@@ -281,8 +281,6 @@ plan_compute_predictors = tar_plan(
 )
 
 # ------------------------- Modeling development- step ONE --------------------------
-
-
 plan_model_stepone = tar_plan(
   # tar_target(
   #   name = "n",
@@ -370,38 +368,38 @@ plan_model_stepone = tar_plan(
   ),
   unlist = FALSE
   ),
-  tar_target(
-    name = "res_featsel_cv",
-    command = dynamic_resamplebm(in_task = tasks_featsel[[2]],
-                                 in_bm = rfbm_classif,
-                                 in_lrnid =  selected_learner,
-                                 in_resampling = featsel_cv,
-                                 store_models = TRUE,
-                                 inp_resdir = file.path(resultspath, "store_premodels_stepone"),
-                                 type = 'classif')
-  ),
-  tar_target(
-    name = "res_featsel_spcv",
-    command = dynamic_resamplebm(in_task = tasks_featsel[[2]],
-                                 in_bm = rfbm_classif,
-                                 in_lrnid =  selected_learner,
-                                 in_resampling = featsel_spcv,
-                                 store_models =  TRUE,
-                                 inp_resdir = file.path(resultspath, "store_premodels_stepone"),
-                                 type = 'classif')
-  ),
-  tar_target(
-    name = "rfeval_featsel",
-    c(res_featsel_cv, res_featsel_spcv)
-  ),
-  tar_target(
-    name = "rfbm_featsel",
-    command = analyze_benchmark(in_bm = rfeval_featsel,
-                                in_measure = measures)
-  ),
+  # tar_target(
+  #   name = "res_featsel_cv",
+  #   command = dynamic_resamplebm(in_task = tasks_featsel[[2]],
+  #                                in_bm = rfbm_classif,
+  #                                in_lrnid =  selected_learner,
+  #                                in_resampling = featsel_cv,
+  #                                store_models = TRUE,
+  #                                inp_resdir = file.path(resultspath, "store_premodels_stepone"),
+  #                                type = 'classif')
+  # ),
+  # tar_target(
+  #   name = "res_featsel_spcv",
+  #   command = dynamic_resamplebm(in_task = tasks_featsel[[2]],
+  #                                in_bm = rfbm_classif,
+  #                                in_lrnid =  selected_learner,
+  #                                in_resampling = featsel_spcv,
+  #                                store_models =  TRUE,
+  #                                inp_resdir = file.path(resultspath, "store_premodels_stepone"),
+  #                                type = 'classif')
+  # ),
+  # tar_target(
+  #   name = "rfeval_featsel",
+  #   c(res_featsel_cv, res_featsel_spcv)
+  # ),
+  # tar_target(
+  #   name = "rfbm_featsel",
+  #   command = analyze_benchmark(in_bm = rfeval_featsel,
+  #                               in_measure = measures)
+  # ),
   tar_target(
     name = "rftuned",
-    command = selecttrain_rf(in_rf = res_featsel_cv,
+    command = selecttrain_rf(in_rf = tasks_featsel,
                              in_learnerid = selected_learner,
                              in_task = "binary_class")
   ),
