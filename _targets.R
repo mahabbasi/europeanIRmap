@@ -406,6 +406,13 @@ plan_model_stepone = tar_plan(
   tar_target(
     name = predvars,
     command = predname_df(in_task = rftuned$task)
+  ),
+  tar_target(
+    name = 'saved_stepone',
+    command = save_model(
+      in_model=rftuned,
+      outdir = 'results/modeldir/rftuned_step1.qs'
+    )
   )
 )
 
@@ -530,7 +537,13 @@ plan_model_step2_fourclasses = tar_plan(
     command = selecttrain_rf(in_rf = rfresampled_classif_step2_fourclass[[2]],
                              in_learnerid = 'classif.ranger',
                              in_task = "multi_class")
-  )
+  ),
+  tar_target(
+    name = 'saved_steptwo',
+    command = save_model(
+      in_model=rftuned_step2_fourclass,
+      outdir = 'results/modeldir/rftuned_step2.qs')
+    )
 )
 
 # ------------------ Plan for applying models to European reaches ----------
