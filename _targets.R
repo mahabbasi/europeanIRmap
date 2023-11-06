@@ -408,22 +408,10 @@ plan_model_stepone = tar_plan(
   tar_target(
     name = predvars,
     command = predname_df(in_task = rftuned$task)
-  ),
-  tar_target(
-    name = 'vimp_plot',
-    command = ggvimp(in_rftuned = rftuned, in_predvars = predvars,
-                     varnum=22, spatial_rsp = FALSE)
-  ),
-   tar_target(
-     name = "pd_plot",
-     command = ggpartialdep(in_rftuned=rftuned,
-                            in_predvars=predvars,
-                            colnums=1:27, nvariate=1, nodupli = FALSE,
-                            grid_resolution = 20, parallel = FALSE, spatial_rsp = FALSE)
-   )
+  )
 )
 
-# ------------------ Modeling step2 with 4 categories test --------------
+# ------------------ Modeling development- step TWO with 4 categories --------------
 plan_model_step2_fourclasses = tar_plan(
   tar_target(
     name = "in_task_step2_fourclass",
@@ -439,7 +427,7 @@ plan_model_step2_fourclasses = tar_plan(
   tar_target(
     name = "baselearners_step2_fourclass",
     command = create_baselearners_steptwo(in_task = in_task_step2_fourclass,
-                                                ncores = 18)
+                                                ncores = parallel::detectCores(logical = FALSE) - 2)
   ),
   tar_target(
     name = "seplearners_step2_fourclass",
@@ -544,25 +532,7 @@ plan_model_step2_fourclasses = tar_plan(
     command = selecttrain_rf(in_rf = rfresampled_classif_step2_fourclass[[2]],
                              in_learnerid = 'classif.ranger',
                              in_task = "multi_class")
-  ),
-  tar_target(
-    name = predvars_step2_fourclass,
-    command = predname_df(in_task = rftuned_step2_fourclass$task,
-                          in_task_all = in_task_step2_fourclass)
-  ),
-  tar_target(
-    name = 'vimp_plot_step2_fourclass',
-    command = ggvimp(in_rftuned = rftuned_step2_fourclass,
-                     in_predvars = predvars_step2_fourclass,
-                     varnum=23, spatial_rsp = FALSE)
   )
-  # tar_target(
-  #   name = "pd_plot_Step2_fourclass",
-  #   command = ggpartialdep(in_rftuned=rftuned_step2_fourclass,
-  #                          in_predvars=predvars_step2_fourclass,
-  #                          colnums=1:27, nvariate=1, nodupli = FALSE,
-  #                          ngrid = 20, parallel = FALSE, spatial_rsp = FALSE)
-  # )
 )
 
 # ------------------ Plan for applying models to European reaches ----------
