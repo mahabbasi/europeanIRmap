@@ -735,7 +735,7 @@ compute_noflow_ratio <- function(in_model, gauges_shp, outdir){
     rename(gaugeid = gauge_d)
   
   output <- left_join(final_gauges, distincted_dt, by = 'gaugeid')
-  output %>% sf::st_write(., dsn=file.path(outdir, 'gaugingstations_figure4ab_step1.shp'))
+  output %>% sf::st_write(., dsn=file.path(here::here(), outdir, 'gaugingstations_figure4ab_step1.shp'))
   return(output)
 }
 ## compute the correlation and NSE for model step1 ->> figure 4c -----
@@ -761,7 +761,7 @@ compute_corr_nse <- function(in_model, gauges_shp, outdir){
   distincted_dt[is.na(nse), nse := 9999]
   final_gauges <- gauges_shp %>% rename(gaugeid = gauge_d)
   output <- left_join(final_gauges, distincted_dt, by = 'gaugeid')
-  output %>% sf::st_write(., dsn=file.path(outdir, 'corr_nse_step1.shp'))
+  output %>% sf::st_write(., dsn=file.path(here::here(), outdir, 'corr_nse_step1.shp'))
   return(output)
 }
 
