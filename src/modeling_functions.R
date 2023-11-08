@@ -1040,5 +1040,156 @@ runmodels_over_period <- function(path_model1,path_model2,path_static,path_LR,pa
   fst::write_fst(res_nets_mat_dt, 
                  path = file.path(outdir,"res_nets_mat_dt.fst"))
   
-  return(res_nets_mat_dt)
+  return(res_nets_mat)
+}
+
+# Validate the model with onde database -------
+# compute the model performance only for reaches - if there is at least one record of intermittent
+# the reach is considered as intermittent, otherwise, it is perennial.
+# The class 2 and 3 are meant to be intermittent. otherwise, the reach is perennial. 
+# also we remove the records with the phase of 4. 
+validate_modelwithonde <- function(path_reachdt, path_ondedt, path_reach_shp, path_onde_shp, outdir){
+  
+  start_date <<- start_date
+  end_date <<- end_date
+  
+  #import the predicted (for the European reaches) and observed (ONDE reaches) data
+  reach_data <- fst::read_fst(path = file.path(path_reachdt, "res_nets_mat_dt.fst"))
+  onde_data <- data.table::fread(file.path(path_ondedt, 'onde_france_merge.csv'))
+  #read the ONDE geofile
+  dryver_riv <- sf::st_read(file.path(path_onde_shp, 'onde_stations_dryverids.shp')) %>% 
+    sf::st_drop_geometry()
+  
+  #read the European reaches geofile
+  net_eu_id_dt <-  sf::st_read(dsn = file.path(path_reach_shp, '01_dryver_net_eu.shp'))
+  
+  #exclude some of irrelavent fields
+  dryver_riv <- dryver_riv %>%
+    select(-c('DRYVER_R_1', 'from_node', 'to_node', 'Shape_Leng',
+              'LENGTH_GEO', 'im_frac', 'upa', 'OBJECTID', 'Join_Count', 'TARGET_FID',
+              'Join_Cou_1', 'TARGET_F_1', 'OBJECTID_1',
+              'F_CdSite_1', 'F_CdSite_2', 'DRYVER_RIV')) %>% 
+    as.data.table()
+  # select only the ONDE reaches from European reaches
+  onde_reaches <- net_eu_id_dt %>% filter(DRYVER_RIV %in% dryver_riv$DRYVER_R_2)
+  
+  data.table::setnames(reach_data, 'V1', 'ids')
+  
+  #select only a few columns of onde observed data
+  onde_data_filtered <- onde_data %>% 
+    dplyr::select(c('<CdSiteHydro>', '<DtRealObservation>', '<RsObservationNat>')) %>% 
+    `colnames<-`(c('site_code', 'dates', 'status')) %>% 
+    .[status != 4,] # remove the phase 4.
+  
+  #create a vector of dates as character 
+  date_char <- seq.Date(start_date, 
+                        as.Date('2019-12-01'), 'month') %>% 
+    as.character()
+  
+  #filter only ONDE reach-months
+  predicted_onde_reaches <- reach_data %>%
+    dplyr::filter(ids %in% dryver_riv$DRYVER_R_2) %>%  # filter the onde reaches
+    `colnames<-`(c('ids', date_char)) # set the cols of dt with date 
+  
+  #reframe the ONDE predicted reach-months
+  predicted_onde_reaches_melted <- predicted_onde_reaches %>% 
+    as.data.table() %>% 
+    melt(., id.var ='ids') %>% 
+    .[,variable := as.Date(variable)]
+  
+  predicted_onde_reaches_melted <- predicted_onde_reaches_melted %>%
+    `colnames<-`(c('DRYvER_RIV', 'dates', 'response'))
+  
+  #filter only reach-month within the study period
+  onde_data_filtered <- onde_data_filtered[site_code %in% dryver_riv$F_CdSiteHy] %>% 
+    .[dates <= end_date]
+  #merged the observed data with shapefile of the reaches
+  merged_dt <- merge(onde_data_filtered, dryver_riv, by.x='site_code',by.y = 'F_CdSiteHy')
+  #set the date to the first day of month
+  merged_dt[, dates := as.Date(paste0(format(dates, "%Y-%m"), "-01"))]
+  merged_dt <- merged_dt %>%
+    rename(., DRYvER_RIV = DRYVER_R_2)
+  #merged the observed and predicted data
+  dd <- merge(merged_dt, predicted_onde_reaches_melted, by=c('DRYvER_RIV', 'dates'))
+  
+  #based on onde definition, if status is 1, it is perennial, otherwise in intermittent
+  dd[, status := ifelse(status == 1, 0, 1)] 
+  dd[,response := ifelse(response == 0, 0, 1)]
+  dd_selected <- dd[,.(DRYvER_RIV,site_code,dates,status, response, upa_1)]
+  dd_selected[,status := as.factor(status)][,response := as.factor(response)]
+  
+  #Compute the ONDE reaches' classes to compute predictive accuracy
+  classes_onde <- dd_selected %>% 
+    group_by(DRYvER_RIV) %>% 
+    dplyr::summarise(count = n(),
+                     obs = sum(status == 1),
+                     pre = sum(response == 1),
+                     DRYvER_RIV = unique(DRYvER_RIV)) %>% 
+    ungroup() %>% 
+    mutate(class=case_when(
+      obs > 0 &   pre == 0 ~ 1,
+      obs > 0 &   pre > 1 ~ 2,
+      obs == 0 &   pre == 0 ~ 3,
+      obs == 0 &   pre > 1 ~ 4
+    ))
+  # Correctly classified reachs
+  onde_correct <- dd_selected %>% 
+    group_by(site_code) %>% 
+    dplyr::summarise(count = n(), 
+                     class_correct = sum(status == response)/ count * 100,
+                     DRYvER_RIV = unique(DRYvER_RIV))
+  #bias and ratio
+  dd_selected[, c('count', 'no_flow_obs', 'no_flow_pre') := 
+                .(.N, sum(status == 1), sum(response == 1)), by = DRYvER_RIV]
+  
+  dd_selected[, c('ratio_no_flow_obs', 'ratio_no_flow_pre') := 
+                .((no_flow_obs / count) * 100, (no_flow_pre / count) * 100), by = .(DRYvER_RIV)][
+                  ,c('ratio') := .(ratio_no_flow_pre / ratio_no_flow_obs),  by = .(DRYvER_RIV)
+                  ][,c('bias') := .(no_flow_pre - no_flow_obs), by = .(DRYvER_RIV)]
+  
+  distincted_dt <- unique(dd_selected, by = 'DRYvER_RIV') %>%
+    .[, .(DRYvER_RIV, site_code, count, no_flow_obs, no_flow_pre, 
+          ratio_no_flow_obs, ratio_no_flow_pre, ratio, bias, upa_1)]
+  
+  distincted_dt[is.na(ratio), ratio := 9999]
+  distincted_dt[is.infinite(ratio), ratio := 999999]
+  
+  #Save the shapefiles for creating maps
+  
+  merge(onde_reaches, distincted_dt, by.x='DRYVER_RIV', by.y='DRYvER_RIV') %>% 
+    sf::write_sf(., file.path(outdir, "onde_ratioandbias_preoverobs.shp"))
+  
+  merge(onde_reaches, classes_onde, by.x='DRYVER_RIV', by.y='DRYvER_RIV') %>% 
+    sf::write_sf(., file.path(outdir, "onde_classes_all_reportrun.shp"))
+  
+  merge(onde_reaches, onde_correct, by.x='DRYVER_RIV', by.y='DRYvER_RIV') %>% 
+    sf::write_sf(., file.path(outdir, "onde_classification_correct.shp"))
+  
+}
+
+# the intermittent fraction of the reaches over Europe
+compute_intermittency_fraction <- function(in_matrix, path_reach_shp, path_static, outdir){
+  
+  #read the upstream area
+  upa <- fst::read_fst(path = path_static,
+                       columns = "drainage_area") %>% 
+    as.data.table()
+  
+  #read the European reaches geofile
+  net_eu_id_dt <-  sf::st_read(dsn = file.path(path_reach_shp, '01_dryver_net_eu.shp'))
+  
+  #compute the fraction of intermittency between 1981-2019
+  d <- rowSums(in_matrix[,-1] > 0)/468 * 100
+  
+  res_nets_mat_dt <- in_matrix %>% 
+    data.table::as.data.table()
+  
+  reach_im_frac <- cbind(id = res_nets_mat_dt$V1,
+                         im_frac = d,
+                         upa = upa$drainage_area) %>% as.data.table()
+  
+  merge(net_eu_id_dt, reach_im_frac,
+        by.y = "id", by.x = "DRYVER_RIV") %>% 
+    sf::st_as_sf() %>%
+    sf::write_sf(., file.path(outdir, "intermittency_frac_reaches_eu.shp"))
 }
