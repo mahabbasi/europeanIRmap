@@ -556,6 +556,21 @@ plan_applyingmodels = tar_plan(
                                     path_LR = file.path(reachesdatpath, "LR"),
                                     path_HR = file.path(reachesdatpath, "HR"),
                                     outdir = reachoutput_path)
+  ),
+  tar_target(
+    name = 'inter_frac_figure8',
+    command = compute_intermittency_fraction(in_matrix = eu_reaches_status_dt,
+                                             path_reach_shp=file.path(datapath,'shp/eu_nets'),
+                                             path_static = file.path(reachesdatpath, "Statics", "static_preds_net_eu.fst"),
+                                             outdir = reachoutput_path)
+  ),
+  tar_target(
+    name = 'validatemodelonde_shp_figure10',
+    command = validate_modelwithonde(path_reachdt = reachoutput_path,
+                                     path_ondedt = file.path(datapath,'ONDE'),
+                                     path_reach_shp = file.path(datapath,'shp/eu_nets'),
+                                     path_onde_shp = file.path(datapath,'shp/ONDE'),
+                                     outdir = shapefiles_path)
   )
 )
 # ------------------ Plan for producing Figures -------------------
