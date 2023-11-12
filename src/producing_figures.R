@@ -765,48 +765,6 @@ compute_corr_nse <- function(in_model, gauges_shp, outdir){
   return(output)
 }
 
-ggplotConfusionMatrix <- function(rftuned_step2, model_data){
-  
-  
-  data_step2 <- model_data[target > 0]
-  dt <- rftuned_step2$rf_outer$prediction() %>% as.data.table() %>% 
-    .[,c('mean_prob1', 'mean_prob2', 'mean_prob3', 'mean_prob4') := .(mean(prob.1), mean(prob.2),
-                                                                      mean(prob.3), mean(prob.4)),
-      by = row_ids] %>% 
-    distinct(., row_ids,.keep_all = TRUE) %>% .[order(row_ids)] %>% 
-    .[, c('prob.1', 'prob.2', 'prob.3', 'prob.4') := NULL]
-  
-  max_values <- pmax(dt$mean_prob1, dt$mean_prob2, dt$mean_prob3, dt$mean_prob4)
-  dt[, class_max := ifelse(max_values == mean_prob1, 1,
-                           ifelse(max_values == mean_prob2, 2,
-                                  ifelse(max_values == mean_prob3, 3, 4)))]
-  
-  dt[,class_max := as.factor(class_max)]
-  dt[,c('gaugeid', 'dates', 'month_date') := .(data_step2$gaugeid, data_step2$dates,
-                                               format(data_step2$dates, '%Y-%m'))]
-  
-  m <- caret::confusionMatrix(dt$class_max, dt$truth)
-  
-  data_c <-  mutate(group_by(as.data.frame(m$table), Reference ), percentage = 
-                      percent(Freq/sum(Freq)))
-  
-  p <- ggplot(data = data_c,
-              aes(x = Reference, y = Prediction)) +
-    geom_tile(aes(fill = Freq), colour = "white") +
-    scale_fill_gradient(low = "white", high = "orange") +
-    geom_text(aes(x = Reference, y = Prediction, label = percentage), size = 5) +
-    geom_text(aes(x = Reference, y = Prediction, label = Freq), vjust = -2, size = 5) +
-    scale_x_discrete(labels=c('1-5 no-flow days', '6-15 no-flow days', '16-29 no-flow days', '30-31 no-flow days'))+
-    scale_y_discrete(labels=c('1-5 no-flow days', '6-15 no-flow days', '16-29 no-flow days', '30-31 no-flow days')) +
-    theme_bw(16) +
-    theme(legend.position = "none",
-          axis.text.x = element_text(angle = 30, vjust = 0.5, family = 'TT Arial', color = 'black'),
-          axis.text.y = element_text(angle = 30, vjust = 0.5, family = 'TT Arial', color = 'black')) +
-    labs(x = 'Observed', y = 'Predicted')
-  
-  return(p)
-}
-
 ### Making plots final version ------
 #### plot boxplot figure 3.a and b. 
 ggboxplot_lognse_fig3 <- function(in_data){
@@ -886,78 +844,17 @@ ggboxplot_lognse_fig3 <- function(in_data){
           axis.line = element_line(colour = 'black', linewidth = 2)
     ) 
   
-  ## plot jitter and boxplot -----
-  outp_nse_jitter <- in_data %>%
-    .[,.(NSE, bins_nse, status)] %>% 
-    ggplot() +
-    stat_summary(aes(as.numeric(factor(bins_nse)) - 0.2, NSE, fill = bins_nse),
-                 fun.data=bp.pctiles, geom="boxplot", width= 0.2) +
-    geom_jitter(aes(as.numeric(factor(bins_nse)) + 0.2, NSE, color = status), 
-                position = position_jitter(width = .1)) +
-    coord_cartesian(ylim = c(-1, 1)) +
-    scale_y_continuous(breaks=c(-1,-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1)) +
-    scale_x_continuous(breaks = unique(as.numeric(factor(in_data$bins_nse))), 
-                       labels = unique(factor(in_data$bins_nse))) +
-    scale_color_manual(values=c("#56B4E9", "#E69F00")) +
-    theme_bw() +
-    labs(x = "Upstream area of streamflow gauging stations Km2
-         (number of stations/number of stations not shown)",
-         y = "NSE")+
-    scale_fill_discrete(name = expression(paste('Upstream area ', km^{2})),
-                        labels = c('[0-2)', "(2-5]", "(5-10]", "(10-50]",
-                                   "(50-500]", "(500-2,500]", "(2500-10,000]", "> 10,000"))+
-    theme(
-      legend.position = "none",
-      axis.title = element_text(colour = "black",
-                                family = "Times New Roman",
-                                size =  14,
-                                face = "bold"),
-      axis.text = element_text(colour = "black",
-                               family = "Times New Roman",
-                               size =  13, 
-                               face = "bold")
-    )
-  
-  outp_lognse_jitter <- in_data %>%
-    .[,.(logNSE, bins_lognse, status)] %>% 
-    ggplot() +
-    stat_summary(aes(as.numeric(factor(bins_lognse)) - 0.2, logNSE, fill = bins_lognse),
-                 fun.data=bp.pctiles, geom="boxplot", width= 0.2) +
-    geom_jitter(aes(as.numeric(factor(bins_lognse)) + 0.2, logNSE, color = status), 
-                position = position_jitter(width = .1)) +
-    coord_cartesian(ylim = c(-1, 1)) +
-    scale_y_continuous(breaks=c(-1,-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1)) +
-    scale_x_continuous(breaks = unique(as.numeric(factor(in_data$bins_lognse))), 
-                       labels = unique(factor(in_data$bins_lognse))) +
-    scale_color_manual(values=c("#56B4E9", "#E69F00")) +
-    theme_bw() +
-    labs(x = "Upstream area of streamflow gauging stations Km2
-         (number of stations/number of stations not shown)",
-         y = "NSE of Log streamflow")+
-    scale_fill_discrete(name = expression(paste('Upstream area ', km^{2})),
-                        labels = c('[0-2)', "(2-5]", "(5-10]", "(10-50]",
-                                   "(50-500]", "(500-2,500]", "(2500-10,000]", "> 10,000"))+
-    theme(
-      legend.position = "none",
-      axis.title = element_text(colour = "black",
-                                family = "Times New Roman",
-                                size =  14,
-                                face = "bold"),
-      axis.text = element_text(colour = "black",
-                               family = "Times New Roman",
-                               size =  13, 
-                               face = "bold")
-    )
-  
-  
   ####### outputs ---------
   outp <- ggpubr::ggarrange(outp_nse, outp_lognse, ncol=2, common.legend = TRUE, legend="bottom")
-  outp_jitter <- ggpubr::ggarrange(outp_nse_jitter, outp_lognse_jitter, ncol=2)
+
   return(outp)
 }
 
-ggboxplot_intermittent_figS3 <- function(intermittent_data){
+ggboxplot_intermittent_figS5 <- function(in_nse_data, in_model_data){
   
+  intermittent_gaugeids <- in_model_data[target >0,] %>% .[,unique(gaugeid)]
+  perennial_gaugeids <- setdiff(in_model_data[,unique(gaugeid)],intermittent_gaugeids)
+  intermittent_data <- in_nse_data %>% filter(gaugeid %in% intermittent_gaugeids)
   #Set the label for the plot grouped by upstream area of gauging stations
   data_label_lognse = c("(0-2] \n(14/3)", "(2-5] \n(16/1)",
                         "(5-10] \n(33/0)", "(10-50] \n(143/21)",
@@ -979,8 +876,6 @@ ggboxplot_intermittent_figS3 <- function(intermittent_data){
                                          500, 2500, 10000, Inf),
                      labels = data_label_nse)] 
   
-  # intermittent_data[NSE < -1.0,up_mdfd] %>% cut(breaks = c(-Inf, 2, 5, 10, 50, 
-  #                                                500, 2500, 10000, Inf)) %>% table()
   # Function to calculate boxplot percentiles
   bp.pctiles = function (x, probs = c(0.05, 0.25, 0.5, 0.75, 0.95)) {
     r <- quantile(x, probs = probs, na.rm = TRUE)
@@ -988,84 +883,61 @@ ggboxplot_intermittent_figS3 <- function(intermittent_data){
     r
   }
   
+  
   #Plot the boxplot of logNSE performance metric in 8 different categories
   outp_lognse <- intermittent_data %>%
     .[,.(logNSE, bins_lognse)] %>%
     reshape2::melt(., id.vars = c("bins_lognse")) %>%
     ggplot(aes(bins_lognse, xend=bins_lognse, y = value))+
-    geom_violin(color= 'blue', width = 0.5) + 
-    stat_summary(fun.data=bp.pctiles, geom="boxplot", width= 0.2)+
+    geom_violin(color= 'blue', width = 0.5) +
+    stat_summary(fun.data=bp.pctiles, geom="boxplot", width= 0.2, linewidth=0.8) +
     scale_y_continuous(breaks=c(-1,-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1))+
-    coord_cartesian(ylim = c(-1, 1)) +
-    theme_bw() +
-    labs(x = "Upstream area of streamflow gauging stations Km2
-         (number of stations/number of stations not shown)",
+    coord_flip(ylim = c(-1, 1)) +
+    theme_bw(18) +
+    labs(x = "",
          y = "NSE of Log streamflow")+
     scale_fill_discrete(name = expression(paste('Upstream area ', km^{2})),
                         labels = c('[0-2)', "(2-5]", "(5-10]", "(10-50]",
                                    "(50-500]", "(500-2,500]", "(2500-10,000]", "> 10,000"))+
-    theme(legend.title = element_text(colour = "black",
-                                      family = "Times New Roman",
-                                      size =  14, 
-                                      face = "bold"),
-          legend.text =  element_text(colour = "black",
-                                      family = "Times New Roman",
-                                      size =  11, 
-                                      face = "bold"),
+    theme(axis.text = element_text(colour = 'black', size = 16),
           legend.position = "bottom",
-          axis.title = element_text(colour = "black",
-                                    family = "Times New Roman",
-                                    size =  14,
-                                    face = "bold"),
-          axis.text = element_text(colour = "black",
-                                   family = "Times New Roman",
-                                   size =  13, 
-                                   face = "bold")
+          panel.grid.major = element_line(colour = "black", linewidth = 0.3),
+          panel.grid.minor = element_line(colour = "black", linewidth = 0.1),
+          axis.line = element_line(colour = 'black', linewidth = 2)
     )
-  
-  
-  
   
   outp_nse <- intermittent_data %>%
     .[,.(NSE, bins_nse)] %>%
     reshape2::melt(., id.vars = c("bins_nse")) %>%
     ggplot(aes(bins_nse, xend=bins_nse, y = value))+
     geom_violin(color= 'blue', width = 0.5) + 
-    stat_summary(fun.data=bp.pctiles, geom="boxplot", width= 0.2)+
-    scale_y_continuous(breaks=c(-1,-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1))+
-    coord_cartesian(ylim = c(-1, 1)) +
-    theme_bw() +
-    labs(x = "Upstream area of streamflow gauging stations
+    stat_summary(fun.data=bp.pctiles, geom="boxplot", width= 0.2, linewidth=0.8)+
+    scale_y_continuous(breaks=c(-1,-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1)) +
+    coord_flip(ylim = c(-1, 1)) +
+    # coord_cartesian(ylim = c(-1, 1)) 
+    theme_bw(18) +
+    labs(x = "Upstream area of streamflow gauging stations [Km2]
          (number of stations/number of stations not shown)",
          y = "NSE")+
     scale_fill_discrete(name = expression(paste('Upstream area ', km^{2})),
                         labels = c('[0-2)', "(2-5]", "(5-10]", "(10-50]",
                                    "(50-500]", "(500-2,500]", "(2500-10,000]", "> 10,000"))+
-    theme(legend.title = element_text(colour = "black",
-                                      family = "Times New Roman",
-                                      size =  14, 
-                                      face = "bold"),
-          legend.text =  element_text(colour = "black",
-                                      family = "Times New Roman",
-                                      size =  11, 
-                                      face = "bold"),
+    theme(axis.text = element_text(colour = 'black', size = 16),
           legend.position = "bottom",
-          axis.title = element_text(colour = "black",
-                                    family = "Times New Roman",
-                                    size =  14,
-                                    face = "bold"),
-          axis.text = element_text(colour = "black",
-                                   family = "Times New Roman",
-                                   size =  13, 
-                                   face = "bold")
+          panel.grid.major = element_line(colour = "black", linewidth = 0.3),
+          panel.grid.minor = element_line(colour = "black", linewidth = 0.1),
+          axis.line = element_line(colour = 'black', linewidth = 2)
     ) 
   
   outp <- ggpubr::ggarrange(outp_nse, outp_lognse, ncol=2, common.legend = TRUE, legend="bottom")
   return(outp)
 }
 
-ggboxplot_perennial_figS4 <- function(perennial_data){
+
+ggboxplot_perennial_figS6 <- function(in_nse_data, in_model_data){
   
+  intermittent_gaugeids <- in_model_data[target >0,] %>% .[,unique(gaugeid)]
+  perennial_data <- in_nse_data %>% filter(!gaugeid %in% intermittent_gaugeids)
   #Set the label for the plot grouped by upstream area of gauging stations
   data_label_lognse = c("(0-2] \n(3/0)", "(2-5] \n(6/1)",
                         "(5-10] \n(19/4)", "(10-50] \n(252/44)",
@@ -1100,34 +972,21 @@ ggboxplot_perennial_figS4 <- function(perennial_data){
     .[,.(logNSE, bins_lognse)] %>%
     reshape2::melt(., id.vars = c("bins_lognse")) %>%
     ggplot(aes(bins_lognse, xend=bins_lognse, y = value))+
-    geom_violin(color= 'blue', width = 0.5) + 
-    stat_summary(fun.data=bp.pctiles, geom="boxplot", width= 0.2)+
+    geom_violin(color= 'blue', width = 0.5) +
+    stat_summary(fun.data=bp.pctiles, geom="boxplot", width= 0.2, linewidth=0.8) +
     scale_y_continuous(breaks=c(-1,-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1))+
-    coord_cartesian(ylim = c(-1, 1)) +
-    theme_bw() +
-    labs(x = "Upstream area of streamflow gauging stations Km2
-         (number of stations/number of stations not shown)",
+    coord_flip(ylim = c(-1, 1)) +
+    theme_bw(18) +
+    labs(x = "",
          y = "NSE of Log streamflow")+
     scale_fill_discrete(name = expression(paste('Upstream area ', km^{2})),
                         labels = c('[0-2)', "(2-5]", "(5-10]", "(10-50]",
                                    "(50-500]", "(500-2,500]", "(2500-10,000]", "> 10,000"))+
-    theme(legend.title = element_text(colour = "black",
-                                      family = "Times New Roman",
-                                      size =  14, 
-                                      face = "bold"),
-          legend.text =  element_text(colour = "black",
-                                      family = "Times New Roman",
-                                      size =  11, 
-                                      face = "bold"),
+    theme(axis.text = element_text(colour = 'black', size = 16),
           legend.position = "bottom",
-          axis.title = element_text(colour = "black",
-                                    family = "Times New Roman",
-                                    size =  14,
-                                    face = "bold"),
-          axis.text = element_text(colour = "black",
-                                   family = "Times New Roman",
-                                   size =  13, 
-                                   face = "bold")
+          panel.grid.major = element_line(colour = "black", linewidth = 0.3),
+          panel.grid.minor = element_line(colour = "black", linewidth = 0.1),
+          axis.line = element_line(colour = 'black', linewidth = 2)
     )
   
   outp_nse <- perennial_data %>%
@@ -1135,38 +994,28 @@ ggboxplot_perennial_figS4 <- function(perennial_data){
     reshape2::melt(., id.vars = c("bins_nse")) %>%
     ggplot(aes(bins_nse, xend=bins_nse, y = value))+
     geom_violin(color= 'blue', width = 0.5) + 
-    stat_summary(fun.data=bp.pctiles, geom="boxplot", width= 0.2)+
-    scale_y_continuous(breaks=c(-1,-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1))+
-    coord_cartesian(ylim = c(-1, 1)) +
-    theme_bw() +
-    labs(x = "Upstream area of streamflow gauging stations
+    stat_summary(fun.data=bp.pctiles, geom="boxplot", width= 0.2, linewidth=0.8)+
+    scale_y_continuous(breaks=c(-1,-0.8, -0.6, -0.4, -0.2, 0, 0.2, 0.4, 0.6, 0.8, 1)) +
+    coord_flip(ylim = c(-1, 1)) +
+    # coord_cartesian(ylim = c(-1, 1)) 
+    theme_bw(18) +
+    labs(x = "Upstream area of streamflow gauging stations [Km2]
          (number of stations/number of stations not shown)",
          y = "NSE")+
     scale_fill_discrete(name = expression(paste('Upstream area ', km^{2})),
                         labels = c('[0-2)', "(2-5]", "(5-10]", "(10-50]",
                                    "(50-500]", "(500-2,500]", "(2500-10,000]", "> 10,000"))+
-    theme(legend.title = element_text(colour = "black",
-                                      family = "Times New Roman",
-                                      size =  14, 
-                                      face = "bold"),
-          legend.text =  element_text(colour = "black",
-                                      family = "Times New Roman",
-                                      size =  11, 
-                                      face = "bold"),
+    theme(axis.text = element_text(colour = 'black', size = 16),
           legend.position = "bottom",
-          axis.title = element_text(colour = "black",
-                                    family = "Times New Roman",
-                                    size =  14,
-                                    face = "bold"),
-          axis.text = element_text(colour = "black",
-                                   family = "Times New Roman",
-                                   size =  13, 
-                                   face = "bold")
+          panel.grid.major = element_line(colour = "black", linewidth = 0.3),
+          panel.grid.minor = element_line(colour = "black", linewidth = 0.1),
+          axis.line = element_line(colour = 'black', linewidth = 2)
     ) 
   
   outp <- ggpubr::ggarrange(outp_nse, outp_lognse, ncol=2, common.legend = TRUE, legend="bottom")
   return(outp)
 }
+
 
 ggplotConfusionMatrix_fig5 <- function(rftuned_step2, model_data){
   
