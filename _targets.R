@@ -18,13 +18,16 @@ check_plot_path = file.path(resultspath, 'ts_plots')
 preprocessed_path = file.path(resultspath, "preprocessed")
 check_plot_set1 = file.path(resultspath, 'ts_plots/set1')
 check_plot_set2 = file.path(resultspath, 'ts_plots/set2')
-shapefiles_path = file.path(resultspath, 'shapefiles')
+shapefiles_path = file.path(resultspath, 'shp')
+shapefiles_stations_path = file.path(resultspath, 'shp/gauging_stations')
+shapefiles_reach_path = file.path(resultspath, 'shp/reaches')
 model_path = file.path(resultspath, 'modeldir')
 reachoutput_path = file.path(resultspath, 'reach_output')
 
 lapply(list(resultspath, check_plot_path, preprocessed_path,
             check_plot_set1, check_plot_set2, shapefiles_path, model_path,
-            reachoutput_path), function(path) {
+            reachoutput_path, shapefiles_stations_path,
+            shapefiles_reach_path), function(path) {
   if (!dir.exists(path)) {
     dir.create(path, recursive = TRUE)
   }
@@ -280,6 +283,28 @@ plan_compute_predictors = tar_plan(
   )
 )
 
+# ----------------------- load the required files for running the workflow ---------
+plan_skip_preprocessing = tar_plan(
+  tar_target(
+    name = 'model_data',
+    command = fst::read_fst(file.path(datapath, 'model_data/model_data.fst')) %>% 
+      data.table::as.data.table()
+  ),
+  tar_target(
+    name = 'final_targets_obs',
+    command = fst::read_fst(file.path(datapath, 'dailystreamflow_obs/observed_streamflow_daily_3706.fst')) %>% 
+      data.table::as.data.table()
+  ),
+  tar_target(
+    name = 'hr_predictors',
+    command = fst::read_fst(file.path(datapath, 'predictors/hr_predictors.fst')) %>% 
+      data.table::as.data.table()
+  ),
+  tar_target(
+    name = 'final_gauges',
+    command = sf::st_read(file.path(datapath, 'shp/eu_stations/final_gauges.shp'))
+  )
+)
 # ------------------------- Modeling development- step ONE --------------------------
 plan_model_stepone = tar_plan(
   # tar_target(
@@ -548,21 +573,26 @@ plan_model_step2_fourclasses = tar_plan(
 
 # ------------------ Plan for applying models to European reaches ----------
 plan_applyingmodels = tar_plan(
+  # tar_target(
+  #   name = 'eu_reaches_status_dt',
+  #   command = runmodels_over_period(path_model1 = file.path(model_path, "rftuned_step1.qs"),
+  #                                   path_model2 = file.path(model_path, "rftuned_step2.qs"),
+  #                                   path_static = file.path(reachesdatpath, "Statics", "static_preds_net_eu.fst"),
+  #                                   path_LR = file.path(reachesdatpath, "LR"),
+  #                                   path_HR = file.path(reachesdatpath, "HR"),
+  #                                   outdir = reachoutput_path)
+  # ),
   tar_target(
     name = 'eu_reaches_status_dt',
-    command = runmodels_over_period(path_model1 = file.path(model_path, "rftuned_step1.qs"),
-                                    path_model2 = file.path(model_path, "rftuned_step2.qs"),
-                                    path_static = file.path(reachesdatpath, "Statics", "static_preds_net_eu.fst"),
-                                    path_LR = file.path(reachesdatpath, "LR"),
-                                    path_HR = file.path(reachesdatpath, "HR"),
-                                    outdir = reachoutput_path)
+    command = fst::read_fst(path = file.path(reachoutput_path, 'res_nets_mat_dt.fst')) %>% 
+      data.table::as.data.table()
   ),
   tar_target(
     name = 'inter_frac_figure8',
     command = compute_intermittency_fraction(in_matrix = eu_reaches_status_dt,
                                              path_reach_shp=file.path(datapath,'shp/eu_nets'),
-                                             path_static = file.path(reachesdatpath, "Statics", "static_preds_net_eu.fst"),
-                                             outdir = reachoutput_path)
+                                             path_static = file.path(datapath, "predictors/Statics", "static_preds_net_eu.fst"),
+                                             outdir = file.path(resultspath,'shp/reaches'))
   ),
   tar_target(
     name = 'validatemodelonde_shp_figure10',
@@ -570,14 +600,14 @@ plan_applyingmodels = tar_plan(
                                      path_ondedt = file.path(datapath,'ONDE'),
                                      path_reach_shp = file.path(datapath,'shp/eu_nets'),
                                      path_onde_shp = file.path(datapath,'shp/ONDE'),
-                                     outdir = shapefiles_path)
+                                     outdir = file.path(resultspath,'shp/onde'))
   )
 )
 # ------------------ Plan for producing Figures -------------------
 plan_figures = tar_plan(
   tar_target(
     name = 'validate_DS_nselognse', # the format is geospatial and used to create Figure 2 as well
-    command = compute_logNSE_NSE_dswatergap(observed_streamflow = final_targets$output_ts,
+    command = compute_logNSE_NSE_dswatergap(observed_streamflow = final_targets_obs,
                                             ds_watergap = hr_predictors,
                                             shp = final_gauges)
   ),
@@ -585,7 +615,7 @@ plan_figures = tar_plan(
     name = 'save_validation_figure2',
     command = {
       tar_read(validate_DS_nselognse) %>%
-        sf::st_write(., dsn = file.path('results/shapefiles', 'logNSE_NSE_obs_vs_DSwatergap.shp'))
+        sf::st_write(., dsn = file.path(shapefiles_stations_path, 'logNSE_NSE_obs_vs_DSwatergap.shp'))
     }
   ),
   tar_target(
@@ -604,31 +634,40 @@ plan_figures = tar_plan(
   ),
   tar_target(
     name = 'ratio_intermittency_step1_figure4ab',
-    command = compute_noflow_ratio(in_model=rftuned,
+    command = compute_noflow_ratio(in_model=tar_read(rftuned),
                                    gauges_shp=final_gauges,
-                                   outdir='results/shapefiles')
+                                   in_model_data=model_data,
+                                   outdir='results/shp/gauging_stations')
   ),
   tar_target(
     name = 'corr_nse_step1_figure4c',
-    command = compute_corr_nse(in_model=rftuned,
+    command = compute_corr_nse(in_model=tar_read(rftuned),
                                gauges_shp=final_gauges,
-                               outdir='results/shapefiles')
+                               in_model_data=model_data,
+                               outdir='results/shp/gauging_stations')
   ),
   tar_target(
     name = 'confmat_step2_figure5',
-    command = ggplotConfusionMatrix_fig5(rftuned_step2=rftuned_step2_fourclass,
+    command = ggplotConfusionMatrix_fig5(rftuned_step2=tar_read(rftuned_step2_fourclass),
                                          model_data=model_data)
   ),
   tar_target(
+    name = 'evaluate_step2_figure6',
+    command = compute_shp_fig6(in_model_step1 = tar_read(rftuned),
+                               in_model_step2 = tar_read(rftuned_step2_fourclass),
+                               in_model_data = model_data,
+                               outdir = shapefiles_stations_path)
+  ),
+  tar_target(
     name = 'varimp_bothstpes_figure7',
-    command = ggvimp(in_rftuned_step1=rftuned,
-                     in_rftuned_step2=rftuned_step2_fourclass,
-                     in_predvars=predvars)
+    command = ggvimp(in_rftuned_step1=tar_read(rftuned),
+                     in_rftuned_step2=tar_read(rftuned_step2_fourclass),
+                     in_predvars=tar_read(predvars))
   ),
   tar_target(
     name = 'partialdepplot_figure6S',
-    command = ggpartialdep(in_rftuned=rftuned,
-                           in_predvars=predvars,
+    command = ggpartialdep(in_rftuned=tar_read(rftuned),
+                           in_predvars=tar_read(predvars),
                            model_data = model_data,
                            colnums=1:23, nvariate=1, nodupli = FALSE,
                            ngrid = 40, parallel = FALSE, spatial_rsp = FALSE)
@@ -637,10 +676,11 @@ plan_figures = tar_plan(
 
 # ------------------ Pipeline of the workflow's plans -------------
 list(
-  plan_preprocess,
-  plan_compute_predictors,
-  plan_model_stepone,
-  plan_model_step2_fourclasses,
+  # plan_preprocess,
+  # plan_compute_predictors,
+  plan_skip_preprocessing,
+  # plan_model_stepone,
+  # plan_model_step2_fourclasses,
   plan_applyingmodels,
   plan_figures
 )
