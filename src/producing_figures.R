@@ -185,7 +185,7 @@ ggpartialdep <- function (in_rftuned, in_predvars, colnums, ngrid, nodupli=T,
                           '(m3 sec-1 km-2)', '(m3 sec-1 km-2)', '(m3 sec-1 km-2)', '(-)', '(People per km2)',
                           '(People per km2)', '(m3 sec-1 km-2)', '(deg/100)', '(days/month * 10000)')
   
-  
+  in_predvars[, combined := paste(abbrevation, unites, sep = " ")]
   model_data[, gwr_to_runoff_ratio := gwr_to_runoff_ratio/100][
     ,wet_days := wet_days/100
     ][
@@ -705,7 +705,7 @@ ggboxplot_perennial_figS6 <- function(in_nse_data, in_model_data){
 }
 
 ### compute the ratio of no-flow observed and predicted -> figure 4 a and b ----
-compute_noflow_ratio <- function(in_model, gauges_shp, outdir){
+compute_noflow_ratio <- function(in_model, gauges_shp, in_model_data, outdir){
   
   dt <- in_model$rf_outer$prediction() %>% as.data.table()
   dt <- dt %>% 
@@ -715,8 +715,8 @@ compute_noflow_ratio <- function(in_model, gauges_shp, outdir){
   
   dt[, response := ifelse(mean_prob0 >= 0.5, 0, 1)]
   
-  dt[,c('gaugeid', 'dates', 'month_date') := .(model_data$gaugeid, model_data$dates,
-                                               format(model_data$dates, '%Y-%m'))]
+  dt[,c('gaugeid', 'dates', 'month_date') := .(in_model_data$gaugeid, in_model_data$dates,
+                                               format(in_model_data$dates, '%Y-%m'))]
   
   dt[, c('count', 'no_flow_obs', 'no_flow_pre') := 
        .(.N, sum(truth == 1), sum(response == 1)), by = gaugeid]
@@ -739,15 +739,15 @@ compute_noflow_ratio <- function(in_model, gauges_shp, outdir){
   return(output)
 }
 ## compute the correlation and NSE for model step1 ->> figure 4c -----
-compute_corr_nse <- function(in_model, gauges_shp, outdir){
+compute_corr_nse <- function(in_model, gauges_shp, in_model_data, outdir){
   
   dt <- in_model$rf_outer$prediction() %>% as.data.table()
   
   dt <- dt %>% .[,c('mean_prob0', 'mean_prob1') := .(mean(prob.0), mean(prob.1)), by = row_ids] %>% 
     distinct(., row_ids,.keep_all = TRUE) %>% .[order(row_ids)]
   dt[, response := ifelse(mean_prob0 >= 0.5, 0, 1)]
-  dt[,c('gaugeid', 'dates', 'date_year') := .(model_data$gaugeid, model_data$dates,
-                                              format(model_data$dates, '%Y'))]
+  dt[,c('gaugeid', 'dates', 'date_year') := .(in_model_data$gaugeid, in_model_data$dates,
+                                              format(in_model_data$dates, '%Y'))]
   
   dt[, response := factor(response)]
   dt[, c('num_obs', 'num_pre') := .(sum(as.numeric(levels(truth)[truth])),
@@ -1057,4 +1057,106 @@ ggplotConfusionMatrix_fig5 <- function(rftuned_step2, model_data){
     labs(x = 'Observed', y = 'Predicted')
   
   return(p)
+}
+
+compute_shp_fig6 <- function(in_model_step1, in_model_step2, in_model_data, gauges_shp,outdir){
+  
+  data_step2 <- in_model_data[target > 0] #filter intermittent station-months
+  
+  dt <- in_model_step2$rf_outer$prediction() %>% as.data.table() %>% 
+    .[,c('mean_prob1', 'mean_prob2', 'mean_prob3', 'mean_prob4') := .(mean(prob.1), mean(prob.2),
+                                                                      mean(prob.3), mean(prob.4)),
+      by = row_ids] %>% 
+    distinct(., row_ids,.keep_all = TRUE) %>% .[order(row_ids)] %>% 
+    .[, c('prob.1', 'prob.2', 'prob.3', 'prob.4') := NULL]
+  
+  max_values <- pmax(dt$mean_prob1, dt$mean_prob2, dt$mean_prob3, dt$mean_prob4)
+  dt[, class_max := ifelse(max_values == mean_prob1, 1,
+                           ifelse(max_values == mean_prob2, 2,
+                                  ifelse(max_values == mean_prob3, 3, 4)))]
+  
+  dt[,class_max := as.factor(class_max)]
+  dt[,c('gaugeid', 'dates', 'month_date') := .(data_step2$gaugeid, data_step2$dates,
+                                               format(data_step2$dates, '%Y-%m'))]
+  
+  
+  new_df <- dt %>% 
+    group_by(gaugeid) %>% 
+    dplyr::summarise(count = n(),
+                     ratio = sum(truth == 1 & class_max == 1 |
+                                   truth == 2 & class_max == 2 |
+                                   truth == 3 & class_max == 3 |
+                                   truth == 4 & class_max == 4) / count * 100)
+  
+  final_gauges <- gauges_shp %>% 
+    rename(gaugeid = gauge_d)
+  
+  merge_st_fig6a <- merge(new_df, final_gauges, by = "gaugeid") %>% 
+    sf::st_as_sf()
+  merge_st_fig6a %>% sf::st_write(., dsn=file.path(outdir, "correctly_classfied_figure6a.shp"))
+  
+  cmean_cobs <- dt %>% 
+    mutate(
+      truth = as.numeric(levels(truth)[truth]),
+      class_max = as.numeric(levels(class_max)[class_max])) %>%
+    group_by(gaugeid) %>% 
+    dplyr::summarise(cm_co = mean(class_max) - mean(truth))
+  
+  merge_st_fig6b <- merge(cmean_cobs, final_gauges, by = "gaugeid") %>% 
+    sf::st_as_sf()
+  merge_st_fig6b %>% sf::st_write(., dsn=file.path(outdir, "cmean_cobs_step2_figure6b.shp"))
+  
+  cor_both <- dt %>% 
+    mutate(
+      truth = as.numeric(levels(truth)[truth]),
+      class_max = as.numeric(levels(class_max)[class_max])) %>%
+    group_by(gaugeid) %>% 
+    dplyr::summarise(cor_pr = cor(truth, class_max, method = 'pearson'),
+                     cor_spr = cor(truth, class_max, method = 'spearman'))
+  
+  cor_both <- cor_both %>% as.data.table() %>%
+    .[is.na(cor_pr), cor_pr := -9999] %>% 
+    .[is.na(cor_spr), cor_spr := -9999]
+  
+  merge_st_fig6c <- merge(cor_both, final_gauges, by = "gaugeid") %>% 
+    sf::st_as_sf()
+  merge_st_fig6c %>% sf::st_write(., dsn=file.path(outdir, "correlation_both_step2_figure6c.shp"))
+  
+  # figure 6d - include the perennial station-months along with intermittent for 855 intermittent gauging stations
+  dt_step1 <- in_model_step1$rf_outer$prediction() %>% as.data.table()
+  
+  intermittent_gaugeid <- dt[target>0, base::unique(gaugeid)]
+  
+  dt_step1 <- dt_step1 %>% 
+    .[,c('mean_prob0', 'mean_prob1') := .(mean(prob.0), mean(prob.1)), by = row_ids] %>% 
+    distinct(., row_ids,.keep_all = TRUE) %>% .[order(row_ids)]
+  
+  dt_step1[, response := ifelse(mean_prob0 >= 0.5, 0, 1)]
+  
+  dt_step1[,c('gaugeid', 'dates', 'date_year') := .(in_model_data$gaugeid, in_model_data$dates,
+                                                    format(in_model_data$dates, '%Y'))]
+  
+  dt_step1_interm <- dt[gaugeid %in% intermittent_gaugeid][,response := as.factor(response)]
+  dt_step1_interm[dt, response := i.class_max, on=c('gaugeid', 'dates')]
+  dt_step1_interm[dt, truth := i.truth, on=c('gaugeid', 'dates')]
+  
+  cor_withzero <- dt_step1_interm %>% 
+    mutate(
+      truth = as.numeric(levels(truth)[truth]),
+      response = as.numeric(levels(response)[response])) %>%
+    group_by(gaugeid) %>% 
+    dplyr::summarise(cor_pr = cor(truth, response, method = 'pearson'),
+                     cor_spr = cor(truth, response, method = 'spearman'))
+  
+  cor_withzero <- cor_withzero %>% as.data.table() %>%
+    .[is.na(cor_pr), cor_pr := -9999] %>%
+    .[is.na(cor_spr), cor_spr := -9999]
+  
+  merge_st_fig6d <- merge(cor_withzero, final_gauges, by = "gaugeid") %>% 
+    sf::st_as_sf()
+  merge_st_fig6d %>% sf::st_write(., dsn=file.path(outdir, "correlation_both_step2_withzero_figure6d.shp"))
+  
+  out_ls <- list(merge_st_fig6a, merge_st_fig6b, merge_st_fig6c, merge_st_fig6d)
+  
+  return(out_ls)
 }
