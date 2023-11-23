@@ -1154,6 +1154,9 @@ validate_modelwithonde <- function(path_reachdt, path_ondedt, path_reach_shp, pa
   distincted_dt[is.na(ratio), ratio := 9999]
   distincted_dt[is.infinite(ratio), ratio := 999999]
   
+  if (!dir.exists(outdir)){
+    dir.create(outdir, recursive = TRUE)
+  }
   #Save the shapefiles for creating maps
   
   merge(onde_reaches, distincted_dt, by.x='DRYVER_RIV', by.y='DRYvER_RIV') %>% 
