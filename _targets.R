@@ -601,6 +601,40 @@ plan_applyingmodels = tar_plan(
                                      path_reach_shp = file.path(datapath,'shp/eu_nets'),
                                      path_onde_shp = file.path(datapath,'shp/ONDE'),
                                      outdir = file.path(resultspath,'shp/onde'))
+  ),
+  tar_target(
+    name = 'select_status_Jan2019',
+    command = select_inter_month(in_reachdt = eu_reaches_status_dt,
+                                 path_reach_shp = file.path(datapath,'shp/eu_nets'),
+                                 path_static = file.path(datapath, "predictors/Statics", "static_preds_net_eu.fst"),
+                                 outdir = file.path(resultspath,'shp/reaches'),
+                                 in_date = 'date_2019_1')
+  ),
+  tar_target(
+    name = 'select_status_Aug2019',
+    command = select_inter_month(in_reachdt = eu_reaches_status_dt,
+                                 path_reach_shp = file.path(datapath,'shp/eu_nets'),
+                                 path_static = file.path(datapath, "predictors/Statics", "static_preds_net_eu.fst"),
+                                 outdir = file.path(resultspath,'shp/reaches'),
+                                 in_date = 'date_2019_8')
+  ),
+  tar_target(
+    name = 'fiveclasses_ts_figure9',
+    command = ggline_inter_ts(in_reachdt = eu_reaches_status_dt)
+  ),
+  tar_target(
+    name = 'fiveclasses_ts_figureS7a',
+    command = ggline_inter_ts(in_reachdt = eu_reaches_status_dt,
+                              in_reach_shp = file.path(datapath,'shp/compare_intermittency_regional',
+                                                       'mediterranean_reaches.shp'),
+                              region = TRUE)
+  ),
+  tar_target(
+    name = 'fiveclasses_ts_figureS7b',
+    command = ggline_inter_ts(in_reachdt = eu_reaches_status_dt,
+                              in_reach_shp = file.path(datapath,'shp/compare_intermittency_regional',
+                                                       'scandinavian_reaches.shp'),
+                              region = TRUE)
   )
 )
 # ------------------ Plan for producing Figures -------------------
@@ -656,6 +690,7 @@ plan_figures = tar_plan(
     command = compute_shp_fig6(in_model_step1 = tar_read(rftuned),
                                in_model_step2 = tar_read(rftuned_step2_fourclass),
                                in_model_data = model_data,
+                               gauges_shp = final_gauges,
                                outdir = shapefiles_stations_path)
   ),
   tar_target(
