@@ -1093,7 +1093,7 @@ compute_shp_fig6 <- function(in_model_step1, in_model_step2, in_model_data, gaug
   
   merge_st_fig6a <- merge(new_df, final_gauges, by = "gaugeid") %>% 
     sf::st_as_sf()
-  merge_st_fig6a %>% sf::st_write(., dsn=file.path(outdir, "correctly_classfied_figure6a.shp"))
+  merge_st_fig6a %>% sf::write_sf(., dsn=file.path(outdir, "correctly_classfied_figure6a.shp"))
   
   cmean_cobs <- dt %>% 
     mutate(
@@ -1104,7 +1104,7 @@ compute_shp_fig6 <- function(in_model_step1, in_model_step2, in_model_data, gaug
   
   merge_st_fig6b <- merge(cmean_cobs, final_gauges, by = "gaugeid") %>% 
     sf::st_as_sf()
-  merge_st_fig6b %>% sf::st_write(., dsn=file.path(outdir, "cmean_cobs_step2_figure6b.shp"))
+  merge_st_fig6b %>% sf::write_sf(., dsn=file.path(outdir, "cmean_cobs_step2_figure6b.shp"))
   
   cor_both <- dt %>% 
     mutate(
@@ -1120,12 +1120,12 @@ compute_shp_fig6 <- function(in_model_step1, in_model_step2, in_model_data, gaug
   
   merge_st_fig6c <- merge(cor_both, final_gauges, by = "gaugeid") %>% 
     sf::st_as_sf()
-  merge_st_fig6c %>% sf::st_write(., dsn=file.path(outdir, "correlation_both_step2_figure6c.shp"))
+  merge_st_fig6c %>% sf::write_sf(., dsn=file.path(outdir, "correlation_both_step2_figure6c.shp"))
   
-  # figure 6d - include the perennial station-months along with intermittent for 855 intermittent gauging stations
+  # figure 6d - include the perennial station-months along with intermittent for 885 intermittent gauging stations
   dt_step1 <- in_model_step1$rf_outer$prediction() %>% as.data.table()
   
-  intermittent_gaugeid <- dt[target>0, base::unique(gaugeid)]
+  intermittent_gaugeid <- dt[, base::unique(gaugeid)]
   
   dt_step1 <- dt_step1 %>% 
     .[,c('mean_prob0', 'mean_prob1') := .(mean(prob.0), mean(prob.1)), by = row_ids] %>% 
@@ -1136,7 +1136,7 @@ compute_shp_fig6 <- function(in_model_step1, in_model_step2, in_model_data, gaug
   dt_step1[,c('gaugeid', 'dates', 'date_year') := .(in_model_data$gaugeid, in_model_data$dates,
                                                     format(in_model_data$dates, '%Y'))]
   
-  dt_step1_interm <- dt[gaugeid %in% intermittent_gaugeid][,response := as.factor(response)]
+  dt_step1_interm <- dt_step1[gaugeid %in% intermittent_gaugeid][,response := as.factor(response)]
   dt_step1_interm[dt, response := i.class_max, on=c('gaugeid', 'dates')]
   dt_step1_interm[dt, truth := i.truth, on=c('gaugeid', 'dates')]
   
@@ -1154,9 +1154,93 @@ compute_shp_fig6 <- function(in_model_step1, in_model_step2, in_model_data, gaug
   
   merge_st_fig6d <- merge(cor_withzero, final_gauges, by = "gaugeid") %>% 
     sf::st_as_sf()
-  merge_st_fig6d %>% sf::st_write(., dsn=file.path(outdir, "correlation_both_step2_withzero_figure6d.shp"))
+  merge_st_fig6d %>% sf::write_sf(., dsn=file.path(outdir, "correlation_both_step2_withzero_figure6d.shp"))
   
   out_ls <- list(merge_st_fig6a, merge_st_fig6b, merge_st_fig6c, merge_st_fig6d)
   
   return(out_ls)
+}
+
+select_inter_month <- function(in_reachdt, path_static, path_reach_shp, outdir, in_date='date_2019_8'){
+  
+  # reach_data <- fst::read_fst(path = in_reachdt)
+  
+  net_eu_id_dt <-  sf::read_sf(dsn = path_reach_shp)
+  
+  upa <- fst::read_fst(path = path_static,
+                       columns = c('DRYVER_RIVID',"drainage_area")) %>% 
+    as.data.table() %>% rename(upa = drainage_area,
+                               DRYVER_RIV = DRYVER_RIVID)
+  
+  years <- 1981:2019
+  col_names <- vector("character")
+  for(i in seq_along(years)){
+    for(j in 1:12){
+      col_names[(i-1)*12 + j] <- paste0("date_",years[i],"_",j)
+    }
+  }
+  
+  in_reachdt <- in_reachdt %>% 
+    `colnames<-`(c("DRYVER_RIV", col_names))
+  
+  
+  selected_mon_mr <- base::merge(in_reachdt[,c("DRYVER_RIV", in_date), with=FALSE], upa, by = "DRYVER_RIV")
+  
+  sel_mon_st <- merge(net_eu_id_dt, selected_mon_mr, by = "DRYVER_RIV") %>% sf::st_as_sf() 
+  sf::write_sf(sel_mon_st, dsn=file.path(outdir, paste0("all_reaches_eu", in_date, '.shp')))
+}
+
+ggline_inter_ts <- function(in_reachdt, in_reach_shp=NULL, region=FALSE){
+  
+  if (region == TRUE) {
+    region_sf <-  sf::read_sf(in_reach_shp)
+    region_ids <- region_sf %>% 
+      sf::st_drop_geometry() %>%
+      pull(DRYVER_RIV)
+    
+    in_reachdt <- in_reachdt %>% 
+      filter(V1 %in% region_ids)
+    
+    classes_reach_mon_df <- lapply(1:5, function(i){
+      out <- colSums(in_reachdt == (i-1))/dim(in_reachdt)[1] *100
+      out[-1]
+    }) %>% 
+      do.call("rbind", .)
+  }else {
+    classes_reach_mon_df <- lapply(1:5, function(i){
+      out <- colSums(in_reachdt == (i-1))/dim(in_reachdt)[1] *100
+      out[-1]
+    }) %>% 
+      do.call("rbind", .)
+  }
+  
+  df1 <- classes_reach_mon_df %>% t() %>% as.data.table() %>% 
+    cbind(time = seq.Date(as.Date("1981-01-01"),
+                          as.Date("2019-12-31"), "month")) %>% 
+    `colnames<-`(c("Perennial", "1-5 no-flow days",
+                   "6-15 no-flow days", "16-29 no-flow days",
+                   "30-31 no-flow days", "time")) %>% 
+    data.table::melt(., id.vars = "time",
+                     measure.vars = c("Perennial", "1-5 no-flow days",
+                                      "6-15 no-flow days", "16-29 no-flow days",
+                                      "30-31 no-flow days"))
+  pout <- df1 %>%
+    ggplot(., aes(x = time, y = value, color = variable)) +
+    geom_line()+
+    geom_point(size = 0.5, color='black')+
+    theme_bw(16) + 
+    facet_wrap("variable", scales = "free", ncol = 1) +
+    scale_color_manual( values = c("deepskyblue4", "green",
+                                   "yellow", "darkorange4", "red")) +
+    labs(y = "Fraction of reaches over Europe (%)",
+         x = "date (month)") +
+    theme(panel.grid.major.y = element_line(colour = "black"),
+          legend.position = "none",
+          axis.title = element_text(colour = "black",
+                                    size =  16,
+                                    face = "bold"),
+          axis.text = element_text(colour = "black",
+                                   size =  14))
+  
+  return(pout)
 }
